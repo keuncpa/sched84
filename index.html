@@ -109,6 +109,8 @@ textarea{min-height:72px;resize:vertical}
 .link{color:var(--sat);text-decoration:underline;font-size:14px;margin-top:16px;display:inline-block}
 .pad{padding:12px 14px}
 .help{font-size:13px;color:var(--sub);line-height:1.6}
+.install{background:var(--sel);border-bottom:1px solid var(--line);padding:10px 12px 10px 14px;font-size:13.5px;line-height:1.5;display:flex;gap:10px;align-items:center}
+.install>div{flex:1}.install .x{font-size:22px;color:var(--sub);padding:0 6px}.install .btn{margin-top:6px;display:inline-block}
 #toast{position:fixed;left:50%;bottom:140px;transform:translateX(-50%);z-index:20;background:#111;color:#fff;border-radius:10px;padding:10px 16px;font-size:14px;max-width:86%;display:none}
 </style>
 </head>
@@ -243,6 +245,7 @@ const S = {
   filter: new Set(ORDER), onlyMine: false, sheet: false,
 };
 const app = document.getElementById('app');
+const mount = (...kids) => app.replaceChildren(...kids.filter(k => k != null && k !== false));
 const nameOf = id => (S.pmap[id] && S.pmap[id].name) || '?';
 const visible = e => S.filter.has(e.type) && (!S.onlyMine || e.owner_id === S.user.id);
 const onDay = d => S.events.filter(e => e.start_date <= d && e.end_date >= d && visible(e))
@@ -260,7 +263,7 @@ async function boot() {
     S.user = await store.session();
     if (!S.user) return renderAuth('in');
     await enter();
-  } catch (e) { app.replaceChildren(h('div', { class: 'auth' }, h('h1', {}, DEPT + ' 일정표'), h('p', {}, errText(e)), h('button', { class: 'btn', onclick: () => location.reload() }, '다시 시도'))); }
+  } catch (e) { mount(h('div', { class: 'auth' }, h('h1', {}, DEPT + ' 일정표'), h('p', {}, errText(e)), h('button', { class: 'btn', onclick: () => location.reload() }, '다시 시도'))); }
 }
 async function loadProfiles() {
   S.profiles = await store.profiles();
@@ -271,6 +274,27 @@ async function enter() {
   await loadProfiles();
   if (!S.me || !S.me.approved) return renderPending();
   renderShell(); await refresh();
+}
+
+/* ---------- 앱 설치 안내 (브라우저로 열었을 때만 표시) ---------- */
+const UA = navigator.userAgent;
+const STANDALONE = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const IOS = /iPhone|iPad|iPod/.test(UA);
+const INAPP = /KAKAOTALK|NAVER\(inapp|Instagram|FBAN|FBAV|Line\//i.test(UA);
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; const b = document.getElementById('installBtn'); if (b) b.style.display = ''; });
+window.addEventListener('appinstalled', () => { const b = document.getElementById('install'); if (b) b.remove(); });
+function installBar() {
+  if (DEMO || STANDALONE) return null;
+  try { if (localStorage.getItem('sched84-noinstall') === '1') return null; } catch (e) { /* 무시 */ }
+  let body;
+  if (INAPP) body = h('div', {}, h('b', {}, '앱으로 설치하려면 '), '카카오톡 등 다른 앱 안에서는 설치가 안 됩니다. 화면의 ⋮ 또는 공유 메뉴에서 "다른 브라우저로 열기"(Safari/Chrome)를 누른 뒤 다시 열어 주세요.');
+  else if (IOS) body = h('div', {}, h('b', {}, '앱으로 설치: '), '화면의 공유 버튼(네모에 ↑ 화살표) → "홈 화면에 추가"를 누르면 홈 화면에 앱 아이콘이 생깁니다. 다음부터는 아이콘만 누르면 됩니다.');
+  else body = h('div', {}, h('b', {}, '앱으로 설치: '), '한 번 설치하면 다음부터는 홈 화면 아이콘으로 바로 열립니다. 버튼이 안 보이면 브라우저 ⋮ 메뉴 → "앱 설치" 또는 "홈 화면에 추가".',
+    h('div', {}, h('button', { class: 'btn sm', id: 'installBtn', style: deferredInstall ? '' : 'display:none', onclick: async () => { if (!deferredInstall) return; deferredInstall.prompt(); await deferredInstall.userChoice.catch(() => {}); deferredInstall = null; } }, '앱 설치')));
+  const bar = h('div', { class: 'install', id: 'install' }, body,
+    h('button', { class: 'x', 'aria-label': '안내 닫기', onclick: () => { try { localStorage.setItem('sched84-noinstall', '1'); } catch (e) { /* 무시 */ } bar.remove(); } }, '×'));
+  return bar;
 }
 
 /* ---------- 로그인 화면 ---------- */
@@ -294,12 +318,12 @@ function renderAuth(mode) {
     up && h('label', {}, '이름'), up && name,
     h('label', {}, '이메일'), email, h('label', {}, '비밀번호'), pw,
     h('div', { class: 'btns' }, btn));
-  app.replaceChildren(h('div', { class: 'auth' },
+  mount(installBar(), h('div', { class: 'auth' },
     h('h1', {}, DEPT + ' 일정표'), h('p', {}, up ? '가입 후 관리자가 승인하면 사용할 수 있습니다.' : '부서원 전용 일정표입니다.'), form,
     h('button', { class: 'link', onclick: () => renderAuth(up ? 'in' : 'up') }, up ? '이미 가입했어요 · 로그인' : '처음이신가요? · 가입 신청')));
 }
 function renderPending() {
-  app.replaceChildren(h('div', { class: 'auth' },
+  mount(h('div', { class: 'auth' },
     h('h1', {}, '승인 대기 중'), h('p', {}, '가입 신청이 접수되었습니다. 관리자가 승인하면 일정표를 볼 수 있습니다.'),
     h('div', { class: 'btns' },
       h('button', { class: 'btn', onclick: () => enter().catch(e => toast(errText(e))) }, '승인 확인'),
@@ -312,8 +336,9 @@ let elNav, elMain, elTabs, elFab;
 function renderShell() {
   elNav = h('div', { class: 'nav' }); elMain = h('main', {});
   elTabs = h('div', {}); elFab = h('button', { class: 'fab', 'aria-label': '일정 추가', onclick: () => openForm({ start_date: S.view === 'cal' ? S.sel : today() }) }, '+');
-  app.replaceChildren(
+  mount(
     h('header', {}, h('div', { class: 'hrow' }, h('h1', {}, DEPT + ' 일정표')), elNav),
+    installBar(),
     DEMO && h('div', { class: 'demo' }, '데모 모드 — 서버 연결 전 미리보기입니다. 입력 내용은 이 기기에만 저장됩니다.'),
     elMain, h('nav', { class: 'tabs' }, elTabs), elFab);
 }
