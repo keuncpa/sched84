@@ -186,7 +186,7 @@ function supaStore(sb) {
     async signIn(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
     async signUp(email, password, name) { const d = ok(await sb.auth.signUp({ email, password, options: { data: { name } } })); return !!d.session; },
     async signOut() { await sb.auth.signOut(); },
-    async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname })); },
+    async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname.replace(/index\.html$/, '') })); },
     async setPassword(pw) { ok(await sb.auth.updateUser({ password: pw })); },
     async profiles() { return ok(await sb.from('profiles').select('id,name,title,approved,is_admin').order('name')); },
     async events(from, to) { return ok(await sb.from('events').select(cols).lte('start_date', to).gte('end_date', from).order('start_date').limit(1000)); },
