@@ -111,6 +111,7 @@ textarea{min-height:72px;resize:vertical}
 .help{font-size:13px;color:var(--sub);line-height:1.6}
 .install{background:var(--sel);border-bottom:1px solid var(--line);padding:10px 12px 10px 14px;font-size:13.5px;line-height:1.5;display:flex;gap:10px;align-items:center}
 .install>div{flex:1}.install .x{font-size:22px;color:var(--sub);padding:0 6px}.install .btn{margin-top:6px;display:inline-block}
+.keep{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:14.5px;color:var(--text)}.keep input{width:20px;height:20px;margin:0}
 #toast{position:fixed;left:50%;bottom:140px;transform:translateX(-50%);z-index:20;background:#111;color:#fff;border-radius:10px;padding:10px 16px;font-size:14px;max-width:86%;display:none}
 </style>
 </head>
@@ -176,6 +177,23 @@ function errText(e) {
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return '네트워크 연결을 확인해 주세요.';
   return '오류: ' + m;
 }
+
+/* ---------- 로그인 상태 유지 선택 ---------- */
+// 유지 선택 시: 기기에 계속 저장(localStorage) / 해제 시: 앱·탭을 닫으면 로그아웃(sessionStorage)
+const REMEMBER_KEY = 'sched84-remember';
+const box = pick => ({
+  get: k => { try { return pick().getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { pick().setItem(k, v); } catch (e) { /* 무시 */ } },
+  del: k => { try { pick().removeItem(k); } catch (e) { /* 무시 */ } },
+});
+const LS = box(() => localStorage), SS = box(() => sessionStorage);
+const remembered = () => LS.get(REMEMBER_KEY) !== '0';
+const setRemember = v => LS.set(REMEMBER_KEY, v ? '1' : '0');
+const authStorage = {
+  getItem: k => { const v = LS.get(k); return v != null ? v : SS.get(k); },
+  setItem: (k, v) => { if (remembered()) { LS.set(k, v); SS.del(k); } else { SS.set(k, v); LS.del(k); } },
+  removeItem: k => { LS.del(k); SS.del(k); },
+};
 
 /* ---------- 저장소: 실제 서버(Supabase) ---------- */
 function supaStore(sb) {
@@ -264,7 +282,7 @@ async function boot() {
     if (DEMO) store = demoStore();
     else {
       await new Promise((res, rej) => { const s = h('script', { src: 'supabase.js' }); s.onload = res; s.onerror = () => rej(new Error('supabase.js 파일을 불러오지 못했습니다.')); document.head.append(s); });
-      const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY);
+      const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { storage: authStorage } });
       sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY' && !S.recovery) { S.recovery = true; if (S.booted) renderNewPassword(); } });
       store = supaStore(sb);
     }
@@ -315,10 +333,12 @@ function renderAuth(mode) {
   const name = h('input', { type: 'text', maxlength: 30, autocomplete: 'name', placeholder: '실명 (예: 홍길동)' });
   const email = h('input', { type: 'email', autocomplete: 'email', placeholder: 'name@example.com' });
   const pw = h('input', { type: 'password', autocomplete: up ? 'new-password' : 'current-password', placeholder: '6자 이상' });
+  const keep = h('input', { type: 'checkbox', id: 'keep' }); keep.checked = remembered();
   const btn = h('button', { class: 'btn', type: 'submit' }, up ? '가입 신청' : '로그인');
   const form = h('form', { onsubmit: async ev => {
     ev.preventDefault(); btn.disabled = true;
     try {
+      setRemember(keep.checked);
       if (up) {
         if (!name.value.trim()) throw new Error('이름을 입력해 주세요.');
         const signedIn = await store.signUp(email.value.trim(), pw.value, name.value.trim());
@@ -329,6 +349,7 @@ function renderAuth(mode) {
   } },
     up && h('label', {}, '이름'), up && name,
     h('label', {}, '이메일'), email, h('label', {}, '비밀번호'), pw,
+    !DEMO && h('label', { class: 'keep', for: 'keep' }, keep, '로그인 상태 유지'),
     h('div', { class: 'btns' }, btn));
   mount(installBar(), h('div', { class: 'auth' },
     h('h1', {}, DEPT + ' 일정표'), h('p', {}, up ? '가입 후 관리자가 승인하면 사용할 수 있습니다.' : '부서원 전용 일정표입니다.'), form,
