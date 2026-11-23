@@ -123,6 +123,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
+const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
 /* ---------- 공통 도구 ---------- */
@@ -168,6 +169,9 @@ function errText(e) {
   if (/already registered/i.test(m)) return '이미 가입된 이메일입니다. 로그인해 주세요.';
   if (/Email not confirmed/i.test(m)) return '가입 확인 메일의 링크를 먼저 눌러 주세요.';
   if (/Password should be/i.test(m)) return '비밀번호는 6자 이상으로 입력해 주세요.';
+  if (/different from the old password/i.test(m)) return '이전과 다른 비밀번호를 입력해 주세요.';
+  if (/not authorized/i.test(m)) return '메일 발송 설정이 아직 완료되지 않았습니다. 관리자에게 문의해 주세요.';
+  if (/rate limit|security purposes/i.test(m)) return '요청이 너무 잦습니다. 1~2분 뒤 다시 시도해 주세요.';
   if (/row-level security|permission denied/i.test(m)) return '권한이 없습니다. (본인 일정만 수정할 수 있습니다)';
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return '네트워크 연결을 확인해 주세요.';
   return '오류: ' + m;
@@ -182,6 +186,8 @@ function supaStore(sb) {
     async signIn(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
     async signUp(email, password, name) { const d = ok(await sb.auth.signUp({ email, password, options: { data: { name } } })); return !!d.session; },
     async signOut() { await sb.auth.signOut(); },
+    async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname })); },
+    async setPassword(pw) { ok(await sb.auth.updateUser({ password: pw })); },
     async profiles() { return ok(await sb.from('profiles').select('id,name,title,approved,is_admin').order('name')); },
     async events(from, to) { return ok(await sb.from('events').select(cols).lte('start_date', to).gte('end_date', from).order('start_date').limit(1000)); },
     async myEvents(uid, from) { return ok(await sb.from('events').select(cols).eq('owner_id', uid).gte('end_date', from).order('start_date').limit(300)); },
@@ -221,7 +227,7 @@ function demoStore() {
   const cp = x => JSON.parse(JSON.stringify(x));
   return {
     async session() { return { id: 'me' }; },
-    async signIn() {}, async signUp() { return true; }, async signOut() { try { localStorage.removeItem(KEY); } catch (e) {} },
+    async signIn() {}, async signUp() { return true; }, async resetRequest() {}, async setPassword() {}, async signOut() { try { localStorage.removeItem(KEY); } catch (e) {} },
     async profiles() { return cp(db.profiles); },
     async events(from, to) { return cp(db.events.filter(e => e.start_date <= to && e.end_date >= from)); },
     async myEvents(uid, from) { return cp(db.events.filter(e => e.owner_id === uid && e.end_date >= from).sort((a, b) => a.start_date < b.start_date ? -1 : 1)); },
@@ -258,9 +264,14 @@ async function boot() {
     if (DEMO) store = demoStore();
     else {
       await new Promise((res, rej) => { const s = h('script', { src: 'supabase.js' }); s.onload = res; s.onerror = () => rej(new Error('supabase.js 파일을 불러오지 못했습니다.')); document.head.append(s); });
-      store = supaStore(window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY));
+      const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY);
+      sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY' && !S.recovery) { S.recovery = true; if (S.booted) renderNewPassword(); } });
+      store = supaStore(sb);
     }
-    S.user = await store.session();
+    S.user = await store.session(); S.booted = true;
+    if (/type=recovery/.test(HASH0)) S.recovery = true;
+    if (/error_code=otp_expired|error=access_denied/.test(HASH0)) { history.replaceState(null, '', location.pathname); renderAuth('in'); return toast('재설정 링크가 만료되었거나 이미 사용되었습니다. 다시 요청해 주세요.'); }
+    if (S.recovery && S.user) return renderNewPassword();
     if (!S.user) return renderAuth('in');
     await enter();
   } catch (e) { mount(h('div', { class: 'auth' }, h('h1', {}, DEPT + ' 일정표'), h('p', {}, errText(e)), h('button', { class: 'btn', onclick: () => location.reload() }, '다시 시도'))); }
@@ -299,6 +310,7 @@ function installBar() {
 
 /* ---------- 로그인 화면 ---------- */
 function renderAuth(mode) {
+  if (mode === 'reset') return renderReset();
   const up = mode === 'up';
   const name = h('input', { type: 'text', maxlength: 30, autocomplete: 'name', placeholder: '실명 (예: 홍길동)' });
   const email = h('input', { type: 'email', autocomplete: 'email', placeholder: 'name@example.com' });
@@ -320,7 +332,37 @@ function renderAuth(mode) {
     h('div', { class: 'btns' }, btn));
   mount(installBar(), h('div', { class: 'auth' },
     h('h1', {}, DEPT + ' 일정표'), h('p', {}, up ? '가입 후 관리자가 승인하면 사용할 수 있습니다.' : '부서원 전용 일정표입니다.'), form,
-    h('button', { class: 'link', onclick: () => renderAuth(up ? 'in' : 'up') }, up ? '이미 가입했어요 · 로그인' : '처음이신가요? · 가입 신청')));
+    h('div', {}, h('button', { class: 'link', onclick: () => renderAuth(up ? 'in' : 'up') }, up ? '이미 가입했어요 · 로그인' : '처음이신가요? · 가입 신청')),
+    !up && !DEMO && h('div', {}, h('button', { class: 'link', onclick: () => renderAuth('reset') }, '비밀번호를 잊으셨나요?'))));
+}
+function renderReset() {
+  const email = h('input', { type: 'email', autocomplete: 'email', placeholder: '가입할 때 쓴 메일 주소' });
+  const btn = h('button', { class: 'btn', type: 'submit' }, '재설정 메일 보내기');
+  mount(installBar(), h('div', { class: 'auth' }, h('h1', {}, '비밀번호 재설정'), h('p', {}, '가입한 메일 주소로 재설정 링크를 보내드립니다.'),
+    h('form', { onsubmit: async ev => {
+      ev.preventDefault(); if (!email.value.trim()) return toast('메일 주소를 입력해 주세요.'); btn.disabled = true;
+      try {
+        await store.resetRequest(email.value.trim());
+        mount(h('div', { class: 'auth' }, h('h1', {}, '메일을 확인해 주세요'), h('p', {}, '가입된 주소라면 재설정 링크가 발송되었습니다. 메일의 링크를 눌러 새 비밀번호를 정해 주세요. 몇 분이 지나도 안 오면 스팸함을 확인해 주세요.'),
+          h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: () => renderAuth('in') }, '로그인 화면으로'))));
+      } catch (e) { toast(errText(e)); btn.disabled = false; }
+    } }, h('label', {}, '이메일'), email, h('div', { class: 'btns' }, btn)),
+    h('button', { class: 'link', onclick: () => renderAuth('in') }, '로그인으로 돌아가기')));
+}
+function renderNewPassword() {
+  const p1 = h('input', { type: 'password', autocomplete: 'new-password', placeholder: '6자 이상' }), p2 = h('input', { type: 'password', autocomplete: 'new-password', placeholder: '한 번 더 입력' });
+  const btn = h('button', { class: 'btn', type: 'submit' }, '비밀번호 변경');
+  mount(h('div', { class: 'auth' }, h('h1', {}, '새 비밀번호 설정'), h('p', {}, '앞으로 사용할 비밀번호를 입력해 주세요.'),
+    h('form', { onsubmit: async ev => {
+      ev.preventDefault();
+      if (p1.value.length < 6) return toast('비밀번호는 6자 이상으로 입력해 주세요.');
+      if (p1.value !== p2.value) return toast('두 비밀번호가 서로 다릅니다.');
+      btn.disabled = true;
+      try {
+        await store.setPassword(p1.value); S.recovery = false; history.replaceState(null, '', location.pathname);
+        toast('비밀번호를 변경했습니다.'); S.user = await store.session(); await enter();
+      } catch (e) { toast(errText(e)); btn.disabled = false; }
+    } }, h('label', {}, '새 비밀번호'), p1, h('label', {}, '새 비밀번호 확인'), p2, h('div', { class: 'btns' }, btn))));
 }
 function renderPending() {
   mount(h('div', { class: 'auth' },
