@@ -191,6 +191,7 @@ function supaStore(sb) {
     },
     async remove(id) { const d = ok(await sb.from('events').delete().eq('id', id).select('id')); if (!d.length) throw new Error('permission denied'); },
     async setApproved(id, v) { ok(await sb.from('profiles').update({ approved: v }).eq('id', id)); },
+    async setAdmin(id, v) { ok(await sb.from('profiles').update({ is_admin: v }).eq('id', id)); },
     async saveProfile(id, p) { ok(await sb.from('profiles').update({ name: p.name, title: p.title }).eq('id', id)); },
   };
 }
@@ -229,6 +230,7 @@ function demoStore() {
     },
     async remove(id) { db.events = db.events.filter(e => e.id !== id); persist(); },
     async setApproved(id, v) { db.profiles.find(p => p.id === id).approved = v; persist(); },
+    async setAdmin(id, v) { db.profiles.find(p => p.id === id).is_admin = v; persist(); },
     async saveProfile(id, p) { Object.assign(db.profiles.find(x => x.id === id), p); persist(); },
   };
 }
@@ -406,9 +408,13 @@ function viewMine() {
 function viewSet() {
   const name = h('input', { type: 'text', maxlength: 30, value: S.me.name }), title = h('input', { type: 'text', maxlength: 20, value: S.me.title || '', placeholder: '예: 시니어' });
   const save = async () => { if (!name.value.trim()) return toast('이름을 입력해 주세요.'); try { await store.saveProfile(S.user.id, { name: name.value.trim(), title: title.value.trim() }); toast('저장했습니다.'); refresh(); } catch (e) { toast(errText(e)); } };
+  const admins = S.profiles.filter(p => p.is_admin && p.approved).length;
+  const act = async fn => { try { await fn(); await refresh(); } catch (e) { toast(errText(e)); } };
   const members = [...S.profiles].sort((a, b) => a.approved - b.approved || a.name.localeCompare(b.name, 'ko')).map(p => h('div', { class: 'item' },
     h('span', { style: 'flex:1' }, h('div', { class: 'tt' }, p.name, p.is_admin && h('span', { class: 'badge t-field' }, '관리자'), !p.approved && h('span', { class: 'badge t-deadline' }, '승인 대기')), h('div', { class: 'ss' }, p.title || '')),
-    S.me.is_admin && p.id !== S.user.id && h('button', { class: 'btn sm' + (p.approved ? ' ghost' : ''), onclick: async () => { try { await store.setApproved(p.id, !p.approved); refresh(); } catch (e) { toast(errText(e)); } } }, p.approved ? '승인 취소' : '승인')));
+    S.me.is_admin && h('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
+      p.approved && (p.id !== S.user.id || admins > 1) && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setAdmin(p.id, !p.is_admin)) }, p.is_admin ? '관리자 해제' : '관리자 지정'),
+      p.id !== S.user.id && !p.is_admin && h('button', { class: 'btn sm' + (p.approved ? ' ghost' : ''), onclick: () => act(() => store.setApproved(p.id, !p.approved)) }, p.approved ? '승인 취소' : '승인'))));
   elMain.replaceChildren(
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
     h('h2', {}, `구성원 (${S.profiles.length}명)`), h('div', { class: 'card list' }, members),
