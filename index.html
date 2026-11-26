@@ -107,6 +107,17 @@ table.team{border-collapse:collapse;width:100%;min-width:600px;table-layout:fixe
 .ov{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
 .sheet{background:var(--card);width:100%;max-width:760px;border-radius:16px 16px 0 0;padding:16px 16px calc(env(safe-area-inset-bottom) + 18px);max-height:92vh;overflow-y:auto}
 .sheet h3{margin:0 0 12px;font-size:17px}
+.ov.full{align-items:stretch;background:var(--bg)}
+.ov.full .sheet{background:var(--bg);max-width:760px;width:100%;height:100%;max-height:none;border-radius:0;display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top) + 12px) 18px calc(env(safe-area-inset-bottom) + 16px)}
+.dtop{flex:none;margin-bottom:8px}.dtop .btn{font-size:14.5px;padding:8px 14px}
+.dbody{flex:1;overflow-y:auto;padding-bottom:12px}
+.dtitle{font-size:24px;line-height:1.3;margin:8px 0 4px;word-break:break-all}
+.dsec{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 14px;margin-top:12px}
+.dlab{font-size:12.5px;color:var(--sub);margin-bottom:5px}
+.dbig{font-size:19px;font-weight:700}
+.dwho{display:flex;flex-wrap:wrap;gap:7px}
+.person{border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:15px;font-weight:600;background:var(--bg)}.person small{font-weight:400;color:var(--sub);margin-left:6px;font-size:12px}
+.dfoot{flex:none;margin-top:10px}.dfoot .btn{padding:14px}
 .ov.mid{align-items:center;padding:16px}
 .ov.mid .sheet{border-radius:16px;max-width:520px;max-height:82vh;padding-bottom:18px}
 label{display:block;font-size:12.5px;color:var(--sub);margin:12px 0 4px}
@@ -150,7 +161,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.8';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.9';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -726,19 +737,30 @@ function openDay(d) {
     h('div', { class: 'card list' }, evs.length ? evs.map(e => eventItem(e, true, back)) : h('div', { class: 'empty' }, '등록된 일정이 없습니다.')),
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기'), h('button', { class: 'btn', onclick: () => openForm({ start_date: d }) }, '+ 일정 추가')));
 }
-function openDetail(e, back = null) {
+function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표시
   const del = h('button', { class: 'btn danger', onclick: async () => {
     const n = e.members.length;
     if (!(await ask('해당 일정을 삭제하시겠습니까?', { sub: n ? `배정된 팀원 ${n}명의 일정표에서도 함께 사라집니다.` : '', skipKey: SKIP_DEL }))) return;
     try { await store.remove(e.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (er) { toast(errText(er)); }
   } }, '삭제');
-  sheet(h('h3', {}, e.title),
-    h('div', { class: 'tags', style: 'margin:-6px 0 10px' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), e.members.length > 0 && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
-    h('div', { class: 'kv' }, h('span', {}, e.members.length ? '참여' : '담당'), names(e, 99)), e.members.length > 0 && h('div', { class: 'kv' }, h('span', {}, '배정'), nameOf(e.owner_id) + ' (관리자)'),
-    h('div', { class: 'kv' }, h('span', {}, '기간'), range(e.start_date, e.end_date)),
-    e.memo && h('div', { class: 'memo' }, e.memo),
-    h('div', { class: 'btns' }, canDelete(e) && del, canEdit(e) && h('button', { class: 'btn', onclick: () => openForm(e) }, '수정'), h('button', { class: 'btn ghost', onclick: back || closeSheet }, back ? '목록으로' : '닫기')),
-    !canEdit(e) && h('p', { class: 'help' }, e.members.length ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.'));
+  const t = today(), toStart = dayCount(t, e.start_date) - 1;
+  const when = t > e.end_date ? '종료된 일정' : t >= e.start_date ? (e.start_date === e.end_date ? '오늘' : `진행 중 · ${dayCount(t, e.end_date)}일 남음`) : toStart === 1 ? '내일 시작' : `${toStart}일 뒤 시작`;
+  const who = whoOf(e).map(id => S.pmap[id] || { name: '?', title: '' }).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  const assigned = e.members.length > 0;
+  sheetAt('full',
+    h('div', { class: 'dtop' }, h('button', { class: 'btn ghost sm', onclick: back || closeSheet }, back ? '‹ 목록으로' : '‹ 닫기')),
+    h('div', { class: 'dbody' },
+      h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), assigned && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
+      h('h2', { class: 'dtitle' }, e.title),
+      h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '기간'),
+        h('div', { class: 'dbig' }, e.start_date === e.end_date ? md(e.start_date) : `${md(e.start_date)} – ${md(e.end_date)}`),
+        h('div', { class: 'ss' }, [e.start_date === e.end_date ? null : `총 ${dayCount(e.start_date, e.end_date)}일`, when].filter(Boolean).join(' · '))),
+      h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, assigned ? `참여 팀원 ${who.length}명` : '담당'),
+        h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, p.title && h('small', {}, p.title))))),
+      assigned && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '배정한 사람'), h('div', {}, nameOf(e.owner_id) + ' (관리자)')),
+      h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '메모'), e.memo ? h('div', { class: 'memo', style: 'margin-top:0' }, e.memo) : h('div', { class: 'ss' }, '메모 없음')),
+      !canEdit(e) && h('p', { class: 'help' }, assigned ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.')),
+    (canDelete(e) || canEdit(e)) && h('div', { class: 'btns dfoot' }, canDelete(e) && del, canEdit(e) && h('button', { class: 'btn', onclick: () => openForm(e) }, '수정')));
 }
 function openForm(init) {
   const ev = { type: (CATS.find(c => c.active) || CATS[0]).id, title: '', memo: '', members: [], ...init }; ev.end_date = ev.end_date || ev.start_date;
