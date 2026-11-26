@@ -26,7 +26,7 @@
   --sun:#ff7a7a; --sat:#8fb0ff; --sel:#232a40; --today:#ffd15c; --today-bg:#3a3111;
 }}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%}
+html,body{margin:0;height:100%;overscroll-behavior-x:none}   /* 좌우로 밀 때 브라우저의 "뒤로 가기" 제스처가 대신 먹지 않게 */
 body{background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;-webkit-tap-highlight-color:transparent}
 button,input,textarea,select{font:inherit;color:inherit}
 button{cursor:pointer;border:0;background:none;padding:0}
@@ -35,6 +35,9 @@ header{position:sticky;top:0;z-index:5;background:var(--brand);color:var(--brand
 header.busy::after{content:'';position:absolute;left:0;bottom:0;height:3px;width:32%;background:#ffd15c;border-radius:2px;animation:slide .9s linear infinite}
 @keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(320%)}}
 @media (prefers-reduced-motion:reduce){header.busy::after{animation:none;width:100%;opacity:.6}}
+.grid.inL{animation:inL .18s ease-out}.grid.inR{animation:inR .18s ease-out}
+@keyframes inL{from{transform:translateX(28px);opacity:.3}}@keyframes inR{from{transform:translateX(-28px);opacity:.3}}
+@media (prefers-reduced-motion:reduce){.grid.inL,.grid.inR{animation:none}}
 .hrow{display:flex;align-items:center;gap:8px}
 .hrow h1{font-size:17px;margin:0;flex:1;font-weight:700}
 .upd{color:inherit;background:rgba(255,255,255,.14);border-radius:8px;height:32px;padding:0 11px;font-size:13px;white-space:nowrap}
@@ -184,7 +187,7 @@ input[type=date]::-webkit-date-and-time-value{text-align:left}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.16';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.17';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -631,7 +634,7 @@ function renderChrome() {
   if (S.view === 'cal' || S.view === 'team') {
     const cal = S.view === 'cal', m = parse(S.month);
     const label = cal ? `${m.getFullYear()}년 ${m.getMonth() + 1}월` : `${md(S.week)} – ${md(addDays(S.week, 6))}`;
-    const move = n => { if (cal) { const d = parse(S.month); d.setMonth(d.getMonth() + n); S.month = ymd(d); } else S.week = addDays(S.week, 7 * n); refresh(); };
+    const move = shift;
     elNav.replaceChildren(h('div', { class: 'label' }, label),
       h('button', { onclick: () => { S.month = today().slice(0, 8) + '01'; S.week = mondayOf(today()); S.sel = today(); refresh(); } }, '오늘'),
       h('button', { 'aria-label': '이전', onclick: () => move(-1) }, '‹'), h('button', { 'aria-label': '다음', onclick: () => move(1) }, '›'));
@@ -640,6 +643,38 @@ function renderChrome() {
 }
 // 탭을 바꾸면 "가지고 있던 내용으로 먼저 즉시" 그리고, 서버에서 최신 내용을 받아 바뀐 게 있을 때만 다시 그림.
 // (예전에는 서버 응답을 기다린 뒤에야 화면이 바뀌어서 탭 전환이 굼떠 보였음)
+// 이전/다음 달(달력)·주(팀 보기)로 이동. 화살표 버튼과 달력 좌우 밀기가 함께 씀.
+let slideDir = 0;
+function shift(n) {
+  if (S.view === 'cal') { const d = parse(S.month); d.setDate(1); d.setMonth(d.getMonth() + n); S.month = ymd(d); slideDir = n; }
+  else S.week = addDays(S.week, 7 * n);
+  refresh();
+}
+// 달력을 손가락으로 좌우로 밀면 다음 달/이전 달 (세로 스크롤·유형 줄 가로 스크롤과 헷갈리지 않게 가로로 충분히 민 경우만)
+(() => {
+  let x0 = 0, y0 = 0, t0 = 0, ok = false;
+  document.addEventListener('touchstart', e => {
+    ok = !!S.me && S.view === 'cal' && e.touches.length === 1 && !!e.target.closest('main') && !e.target.closest('.filters') && !document.querySelector('.ov');
+    if (ok) { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now(); }
+  }, { passive: true });
+  document.addEventListener('touchend', e => {
+    if (!ok) return; ok = false;
+    const t = e.changedTouches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.8 && Date.now() - t0 < 700) shift(dx < 0 ? 1 : -1);
+  }, { passive: true });
+  document.addEventListener('touchcancel', () => { ok = false; }, { passive: true });
+})();
+// 달력에서 앞뒤 달을 미리 받아 둠 → 밀었을 때 일정이 바로 보임
+function warmMonths() {
+  if (DEMO) return;
+  const keep = S.month;
+  for (const n of [1, -1]) {
+    const d = parse(keep); d.setDate(1); d.setMonth(d.getMonth() + n); S.month = ymd(d);
+    const [a, b] = monthSpan(), k = a + '~' + b;
+    if (!cache.cal[k]) store.events(a, b).then(ev => { cache.cal[k] = ev; }).catch(() => {});
+  }
+  S.month = keep;
+}
 let seq = 0, firstLoad = false;   // firstLoad: 아직 한 번도 받아온 적 없는 화면 → '없습니다' 대신 '불러오는 중'
 const cache = { cal: {}, team: {}, mine: null };
 const baseSig = () => JSON.stringify([S.profiles, CATS, CLIENTS]);
@@ -669,6 +704,7 @@ async function refresh() {
   if (failed) { if (firstLoad) { firstLoad = false; draw(); } return; }
   if (firstLoad) { firstLoad = false; S.mine = fresh; draw(); return; }
   if (view === 'mine') S.mine = fresh; else if (view !== 'set') S.events = fresh;
+  if (view === 'cal') warmMonths();
   const after = view === 'set' ? baseSig() : JSON.stringify(fresh);
   if (after !== before) draw();             // 3) 바뀐 게 있을 때만 다시 그림 (입력 중인 칸·스크롤을 건드리지 않게)
 }
@@ -717,7 +753,7 @@ function eventItem(e, showWho = true, back = null) {
 /* ---------- 달력 ---------- */
 function viewCal() {
   const [start, , rows] = monthSpan(), t = today(), mon = S.month.slice(0, 7);
-  const grid = h('div', { class: 'grid card' }, DOW.map((d, i) => h('div', { class: 'dow' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') }, d)));
+  const grid = h('div', { class: 'grid card' + (slideDir > 0 ? ' inL' : slideDir < 0 ? ' inR' : '') }, DOW.map((d, i) => h('div', { class: 'dow' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') }, d)));
   for (let i = 0; i < rows * 7; i++) {
     const d = addDays(start, i), evs = onDay(d), dw = i % 7, max = 3;
     grid.append(h('button', { class: 'cell' + (d.slice(0, 7) !== mon ? ' out' : '') + (d === t ? ' today' : '') + (d === S.sel ? ' sel' : ''), onclick: () => { S.sel = d; viewCal(); openDay(d); } },
@@ -725,6 +761,7 @@ function viewCal() {
       evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip ' + ec(e) }, chipKids(e))),
       evs.length > max && h('span', { class: 'more' }, `+${evs.length - (max - 1)}`)));
   }
+  slideDir = 0;
   const evs = onDay(S.sel);
   elMain.replaceChildren(filterBar(), grid, h('h2', {}, `${md(S.sel)} 일정`),
     h('div', { class: 'card list' }, evs.length ? evs.map(e => eventItem(e)) : h('div', { class: 'empty' }, '등록된 일정이 없습니다.')));
