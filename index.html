@@ -43,7 +43,7 @@ main{flex:1;padding:10px 10px 96px}
 .filters::-webkit-scrollbar{display:none}
 .fchip{flex:none;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 11px;font-size:13px;color:var(--sub)}
 .fchip.on{color:var(--text);border-color:var(--text);font-weight:600}
-.fchip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.fchip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:var(--cf)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px}
 .grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));overflow:hidden}
 .dow{font-size:12px;text-align:center;padding:6px 0;color:var(--sub);border-bottom:1px solid var(--line)}
@@ -63,6 +63,19 @@ main{flex:1;padding:10px 10px 96px}
 .more{font-size:10.5px;color:var(--sub);padding-left:3px;margin-top:1px;display:block}
 .t-field{background:var(--field-bg);color:var(--field-fg)} .t-leave{background:var(--leave-bg);color:var(--leave-fg)}
 .t-deadline{background:var(--deadline-bg);color:var(--deadline-fg)} .t-dept{background:var(--dept-bg);color:var(--dept-fg)}
+.c-blue{--cb:#dbe7ff;--cf:#1d3fae}.c-green{--cb:#d8f3df;--cf:#12692f}.c-red{--cb:#ffdcdc;--cf:#b01919}.c-purple{--cb:#eadcff;--cf:#5b21b6}
+.c-orange{--cb:#ffe6cc;--cf:#a34a00}.c-teal{--cb:#cdf3f0;--cf:#0b6b66}.c-pink{--cb:#ffdcee;--cf:#a8246b}.c-gray{--cb:#e6e8ec;--cf:#444b57}
+@media (prefers-color-scheme:dark){
+.c-blue{--cb:#1c2f66;--cf:#c3d4ff}.c-green{--cb:#143d22;--cf:#b4ecc4}.c-red{--cb:#551a1a;--cf:#ffc4c4}.c-purple{--cb:#3a2466;--cf:#dccbff}
+.c-orange{--cb:#55310c;--cf:#ffd3a3}.c-teal{--cb:#0f4744;--cf:#a8ebe6}.c-pink{--cb:#57183a;--cf:#ffc4e0}.c-gray{--cb:#30343c;--cf:#d3d7de}}
+[class*="c-"].fill{background:var(--cb);color:var(--cf)}
+.item .bar[class*="c-"]{background:var(--cf)}
+i.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--cf);margin-right:6px}
+.tags{display:flex;gap:5px;flex-wrap:wrap;margin:3px 0 2px}.tags .badge{margin-left:0}
+.sw{display:flex;gap:8px;flex-wrap:wrap}.sw button{width:36px;height:36px;border-radius:18px;background:var(--cb);border:2px solid transparent;color:var(--cf);font-weight:700}
+.sw button.on{border-color:var(--cf)}
+.chk{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:14.5px;color:var(--text)}.chk input{width:20px;height:20px;margin:0}
+.ord{flex:none;width:34px;height:34px;border:1px solid var(--line);border-radius:8px;color:var(--sub)}.ord:disabled{opacity:.3}
 h2{font-size:15px;margin:16px 4px 8px}
 .list{overflow:hidden}
 .item{display:flex;gap:10px;align-items:stretch;width:100%;text-align:left;padding:11px 12px;border-bottom:1px solid var(--line)}
@@ -97,8 +110,8 @@ table.team{border-collapse:collapse;width:100%;min-width:600px;table-layout:fixe
 label{display:block;font-size:12.5px;color:var(--sub);margin:12px 0 4px}
 input[type=text],input[type=email],input[type=password],input[type=date],textarea{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:9px;padding:10px 11px;font-size:16px;min-height:44px}
 textarea{min-height:72px;resize:vertical}
-.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.seg button{border:1px solid var(--line);border-radius:9px;padding:9px 2px;font-size:13px}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{flex:1 0 22%;border:1px solid var(--line);border-radius:9px;padding:9px 6px;font-size:13px;white-space:nowrap}
 .seg button.on{border-color:transparent;font-weight:700}
 .quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .quick button{border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12.5px}
@@ -135,7 +148,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.4';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.5';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -151,13 +164,26 @@ const dayCount = (a, b) => Math.round((parse(b) - parse(a)) / 86400000) + 1;
 const range = (a, b) => a === b ? md(a) : `${md(a)} – ${md(b)} · ${dayCount(a, b)}일`;
 const mondayOf = s => { const d = parse(s); return addDays(s, -((d.getDay() + 6) % 7)); };
 
-const TYPES = {
-  field:    { label: '필드·감사', ph: '예: A사 기말감사' },
-  leave:    { label: '휴가·교육', ph: '예: 연차', quick: ['연차', '오전 반차', '오후 반차', '교육', '기타 부재'] },
-  deadline: { label: '마감·기한', ph: '예: A사 감사보고서 발행' },
-  dept:     { label: '부서 행사', ph: '예: 부서 회의' },
+// 일정 유형(카테고리): 관리자가 [설정]에서 추가·수정. 아래는 서버에 목록이 없을 때 쓰는 기본값.
+const DEFAULT_CATS = [
+  { id: 'field', label: '필드·감사', color: 'blue', shared: false, active: true, sort: 10 },
+  { id: 'leave', label: '휴가·교육', color: 'green', shared: false, active: true, sort: 20 },
+  { id: 'deadline', label: '마감·기한', color: 'red', shared: false, active: true, sort: 30 },
+  { id: 'dept', label: '부서 행사', color: 'purple', shared: true, active: true, sort: 40 },
+];
+const COLORS = ['blue', 'green', 'red', 'purple', 'orange', 'teal', 'pink', 'gray'];
+const HINTS = {   // 기본 유형에만 있는 입력 도우미
+  field: { ph: '예: A사 기말감사' }, deadline: { ph: '예: A사 감사보고서 발행' }, dept: { ph: '예: 부서 회의' },
+  leave: { ph: '예: 연차', quick: ['연차', '오전 반차', '오후 반차', '교육', '기타 부재'] },
 };
-const ORDER = ['dept', 'deadline', 'field', 'leave'];
+let CATS = [], CMAP = {};
+function setCats(rows) {
+  CATS = [...(rows && rows.length ? rows : DEFAULT_CATS)].sort((a, b) => a.sort - b.sort || a.label.localeCompare(b.label, 'ko'));
+  CMAP = Object.fromEntries(CATS.map(c => [c.id, c]));
+}
+setCats(DEFAULT_CATS);
+const cat = id => CMAP[id] || { id, label: '기타', color: 'gray', shared: false, active: false, sort: 999 };
+const cc = id => 'fill c-' + cat(id).color;
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
@@ -185,6 +211,7 @@ function errText(e) {
   if (/different from the old password/i.test(m)) return '이전과 다른 비밀번호를 입력해 주세요.';
   if (/not authorized/i.test(m)) return '메일 발송 설정이 아직 완료되지 않았습니다. 관리자에게 문의해 주세요.';
   if (/rate limit|security purposes/i.test(m)) return '요청이 너무 잦습니다. 1~2분 뒤 다시 시도해 주세요.';
+  if (/foreign key constraint/i.test(m)) return '이 유형을 쓰는 일정이 있어 삭제할 수 없습니다. 대신 "숨기기"를 사용해 주세요.';
   if (/row-level security|permission denied/i.test(m)) return '권한이 없습니다. (본인 일정만 수정할 수 있습니다)';
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return '네트워크 연결을 확인해 주세요.';
   return '오류: ' + m;
@@ -220,6 +247,13 @@ function supaStore(sb) {
     async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname.replace(/index\.html$/, '') })); },
     async setPassword(pw) { ok(await sb.auth.updateUser({ password: pw })); },
     async profiles() { return ok(await sb.from('profiles').select('id,name,title,approved,is_admin').order('name')); },
+    async categories() { return ok(await sb.from('categories').select('id,label,color,shared,active,sort').order('sort')); },
+    async saveCategory(c) {
+      const row = { label: c.label, color: c.color, shared: c.shared, active: c.active, sort: c.sort };
+      const d = c.id ? ok(await sb.from('categories').update(row).eq('id', c.id).select('id')) : ok(await sb.from('categories').insert(row).select('id'));
+      if (!d || !d.length) throw new Error('permission denied');
+    },
+    async deleteCategory(id) { const d = ok(await sb.from('categories').delete().eq('id', id).select('id')); if (!d.length) throw new Error('permission denied'); },
     async events(from, to) { return norm(ok(await sb.from('events').select(cols).lte('start_date', to).gte('end_date', from).order('start_date').limit(1000))); },
     async myEvents(uid, from) {
       // 내가 직접 넣은 일정 + 관리자가 나를 배정한 일정
@@ -270,12 +304,16 @@ function demoStore() {
     };
   }
   db.events.forEach(e => { e.members = e.members || []; });
+  db.categories = db.categories || JSON.parse(JSON.stringify(DEFAULT_CATS));
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 무시 */ } };
   const cp = x => JSON.parse(JSON.stringify(x));
   return {
     async session() { return { id: 'me' }; },
     async signIn() {}, async signUp() { return true; }, async resetRequest() {}, async setPassword() {}, async signOut() { try { localStorage.removeItem(KEY); } catch (e) {} },
     async profiles() { return cp(db.profiles); },
+    async categories() { return cp(db.categories); },
+    async saveCategory(c) { if (c.id) Object.assign(db.categories.find(x => x.id === c.id), c); else db.categories.push({ ...c, id: 'c' + Date.now() }); persist(); },
+    async deleteCategory(id) { if (db.events.some(e => e.type === id)) throw new Error('violates foreign key constraint'); db.categories = db.categories.filter(c => c.id !== id); persist(); },
     async events(from, to) { return cp(db.events.filter(e => e.start_date <= to && e.end_date >= from)); },
     async myEvents(uid, from) { return cp(db.events.filter(e => (e.members.length ? e.members : [e.owner_id]).includes(uid) && e.end_date >= from).sort((a, b) => a.start_date < b.start_date ? -1 : 1)); },
     async save(ev) {
@@ -299,7 +337,7 @@ let store;
 const S = {
   user: null, me: null, profiles: [], pmap: {}, events: [], mine: [],
   view: 'cal', month: today().slice(0, 8) + '01', week: mondayOf(today()), sel: today(),
-  filter: new Set(ORDER), onlyMine: false, sheet: false,
+  hide: new Set(), onlyMine: false, sheet: false,
 };
 const app = document.getElementById('app');
 const mount = (...kids) => app.replaceChildren(...kids.filter(k => k != null && k !== false));
@@ -307,9 +345,9 @@ const nameOf = id => (S.pmap[id] && S.pmap[id].name) || '?';
 const whoOf = e => (e.members && e.members.length) ? e.members : [e.owner_id];   // 배정이 있으면 배정된 사람들, 없으면 작성자
 const isMine = e => whoOf(e).includes(S.user.id);
 const names = (e, max = 3) => { const n = whoOf(e).map(nameOf).sort((a, b) => a.localeCompare(b, 'ko')); return n.length > max ? `${n.slice(0, max).join(', ')} 외 ${n.length - max}명` : n.join(', '); };
-const visible = e => S.filter.has(e.type) && (!S.onlyMine || isMine(e));
+const visible = e => !S.hide.has(e.type) && (!S.onlyMine || isMine(e));
 const onDay = d => S.events.filter(e => e.start_date <= d && e.end_date >= d && visible(e))
-  .sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type) || (a.start_date < b.start_date ? -1 : 1));
+  .sort((a, b) => (cat(b.type).shared - cat(a.type).shared) || (cat(a.type).sort - cat(b.type).sort) || (a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : 0));
 const canEdit = e => e.owner_id === S.user.id || (S.me.is_admin && e.members && e.members.length > 0);
 const canDelete = e => e.owner_id === S.user.id || S.me.is_admin;
 
@@ -332,6 +370,7 @@ async function boot() {
   } catch (e) { mount(h('div', { class: 'auth' }, h('h1', {}, DEPT + ' 일정표'), h('p', {}, errText(e)), h('button', { class: 'btn', onclick: () => location.reload() }, '다시 시도'))); }
 }
 async function loadProfiles() {
+  try { setCats(await store.categories()); } catch (e) { setCats(DEFAULT_CATS); }   // 유형 목록을 못 읽어도 기본 4개로 동작
   S.profiles = await store.profiles();
   S.pmap = Object.fromEntries(S.profiles.map(p => [p.id, p]));
   S.me = S.pmap[S.user.id] || null;
@@ -530,19 +569,19 @@ function monthSpan() {
   return [start, addDays(start, rows * 7 - 1), rows];
 }
 function filterBar() {
-  const colors = { field: 'var(--field-fg)', leave: 'var(--leave-fg)', deadline: 'var(--deadline-fg)', dept: 'var(--dept-fg)' };
   const redraw = () => ({ cal: viewCal, team: viewTeam })[S.view]();
   return h('div', { class: 'filters' },
     h('button', { class: 'fchip' + (S.onlyMine ? ' on' : ''), onclick: () => { S.onlyMine = !S.onlyMine; redraw(); } }, '내 일정만'),
-    ORDER.map(t => h('button', { class: 'fchip' + (S.filter.has(t) ? ' on' : ''), onclick: () => { S.filter.has(t) ? S.filter.delete(t) : S.filter.add(t); redraw(); } },
-      h('i', { style: 'background:' + colors[t] }), TYPES[t].label)));
+    CATS.filter(c => c.active || S.events.some(e => e.type === c.id)).map(c => h('button', { class: 'fchip' + (S.hide.has(c.id) ? '' : ' on'), onclick: () => { S.hide.has(c.id) ? S.hide.delete(c.id) : S.hide.add(c.id); redraw(); } },
+      h('i', { class: 'c-' + c.color }), c.label)));
 }
-const chipText = e => { if (e.type === 'dept') return e.title; const p = whoOf(e); return `${nameOf(p.includes(S.user.id) ? S.user.id : p[0])}${p.length > 1 ? '+' + (p.length - 1) : ''} ${e.title}`; };
+const chipText = e => { if (cat(e.type).shared) return e.title; const p = whoOf(e); return `${nameOf(p.includes(S.user.id) ? S.user.id : p[0])}${p.length > 1 ? '+' + (p.length - 1) : ''} ${e.title}`; };
 function eventItem(e, showWho = true, back = null) {
   return h('button', { class: 'item', onclick: () => openDetail(e, back) },
-    h('span', { class: 'bar t-' + e.type }),
-    h('span', {}, h('div', { class: 'tt' }, e.title),
-      h('div', { class: 'ss' }, [showWho && names(e), TYPES[e.type].label + (e.members && e.members.length ? ' · 배정' : ''), range(e.start_date, e.end_date)].filter(Boolean).join(' · '))));
+    h('span', { class: 'bar ' + cc(e.type) }),
+    h('span', { style: 'min-width:0' }, h('div', { class: 'tt' }, e.title),
+      h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), e.members && e.members.length > 0 && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
+      h('div', { class: 'ss' }, [showWho && names(e), range(e.start_date, e.end_date)].filter(Boolean).join(' · '))));
 }
 
 /* ---------- 달력 ---------- */
@@ -553,7 +592,7 @@ function viewCal() {
     const d = addDays(start, i), evs = onDay(d), dw = i % 7, max = 3;
     grid.append(h('button', { class: 'cell' + (d.slice(0, 7) !== mon ? ' out' : '') + (d === t ? ' today' : '') + (d === S.sel ? ' sel' : ''), onclick: () => { S.sel = d; viewCal(); openDay(d); } },
       h('span', { class: 'numrow' }, h('span', { class: 'num' + (dw === 0 ? ' sun' : dw === 6 ? ' sat' : '') }, parse(d).getDate()), d === t && h('span', { class: 'todaytag' }, '오늘')),
-      evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip t-' + e.type }, chipText(e))),
+      evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip ' + cc(e.type) }, chipText(e))),
       evs.length > max && h('span', { class: 'more' }, `+${evs.length - (max - 1)}`)));
   }
   const evs = onDay(S.sel);
@@ -565,12 +604,12 @@ function viewCal() {
 function viewTeam() {
   const days = Array.from({ length: 7 }, (_, i) => addDays(S.week, i)), t = today();
   const people = S.profiles.filter(p => p.approved).sort((a, b) => (b.id === S.user.id) - (a.id === S.user.id) || a.name.localeCompare(b.name, 'ko'));
-  const cellChips = list => list.map(e => h('button', { class: 'chip t-' + e.type, onclick: ev => { ev.stopPropagation(); openDetail(e); } }, e.title));
+  const cellChips = list => list.map(e => h('button', { class: 'chip ' + cc(e.type), onclick: ev => { ev.stopPropagation(); openDetail(e); } }, e.title));
   const head = h('tr', {}, h('th', { class: 'who' }, ''), days.map(d => { const w = parse(d).getDay(); return h('th', { class: (d === t ? 'tod ' : '') + (w === 0 ? 'sun' : w === 6 ? 'sat' : '') }, `${DOW[w]} ${parse(d).getDate()}`); }));
-  const deptRow = h('tr', {}, h('td', { class: 'who' }, '부서 공통'), days.map(d => h('td', { class: d === t ? 'tod' : '' }, cellChips(onDay(d).filter(e => e.type === 'dept')))));
+  const deptRow = h('tr', {}, h('td', { class: 'who' }, '부서 공통'), days.map(d => h('td', { class: d === t ? 'tod' : '' }, cellChips(onDay(d).filter(e => cat(e.type).shared)))));
   const rowsEl = people.map(p => h('tr', {}, h('td', { class: 'who' }, p.name, p.title && h('small', {}, p.title)),
     days.map(d => { const mine = p.id === S.user.id; return h('td', { class: (d === t ? 'tod ' : '') + (mine ? 'mine' : ''), onclick: mine ? () => openForm({ start_date: d }) : null },
-      cellChips(onDay(d).filter(e => e.type !== 'dept' && whoOf(e).includes(p.id)))); })));
+      cellChips(onDay(d).filter(e => !cat(e.type).shared && whoOf(e).includes(p.id)))); })));
   elMain.replaceChildren(filterBar(), h('div', { class: 'card twrap' }, h('table', { class: 'team' }, h('thead', {}, head), h('tbody', {}, deptRow, rowsEl))),
     h('p', { class: 'help pad' }, '내 줄의 빈 칸을 누르면 그 날짜로 일정을 추가합니다. 표는 좌우로 밀어서 볼 수 있습니다.'));
 }
@@ -595,10 +634,56 @@ function viewSet() {
   elMain.replaceChildren(...[
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
     h('h2', {}, `구성원 (${S.profiles.length}명)`), h('div', { class: 'card list' }, members),
+    S.me.is_admin && h('h2', {}, '일정 유형 관리 (관리자)'), S.me.is_admin && catCard(),
     !DEMO && h('h2', {}, '배정 알림'), !DEMO && pushCard(),
     h('h2', {}, '폰 홈 화면에 앱으로 추가'), h('div', { class: 'card pad help' },
       h('div', {}, '아이폰: Safari로 접속 → 아래 공유 버튼 → "홈 화면에 추가"'), h('div', {}, '안드로이드: Chrome으로 접속 → 오른쪽 위 ⋮ 메뉴 → "홈 화면에 추가" 또는 "앱 설치"')),
     h('div', { class: 'btns', style: 'margin:18px 2px' }, h('button', { class: 'btn ghost', onclick: logout }, DEMO ? '데모 데이터 초기화' : '로그아웃'))].filter(Boolean));
+}
+
+/* ---------- 일정 유형 관리 (관리자) ---------- */
+function catCard() {
+  const run = async fn => { try { await fn(); await refresh(); } catch (e) { toast(errText(e)); } };
+  // 순서 변경: 두 칸을 바꾼 뒤 전체를 10, 20, 30… 으로 다시 매김 (번호가 겹치거나 비어 있어도 항상 화면 순서대로 저장됨)
+  const move = (i, j) => run(async () => {
+    const arr = [...CATS]; [arr[i], arr[j]] = [arr[j], arr[i]];
+    for (let k = 0; k < arr.length; k++) if (arr[k].sort !== (k + 1) * 10) await store.saveCategory({ ...arr[k], sort: (k + 1) * 10 });
+  });
+  const list = CATS;
+  return h('div', { class: 'card list' },
+    list.map((c, i) => h('div', { class: 'item', style: 'align-items:center' },
+      h('button', { style: 'flex:1;text-align:left;min-width:0', onclick: () => openCat(c) },
+        h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.label, c.shared && h('span', { class: 'badge fill c-gray' }, '부서 공통'), !c.active && h('span', { class: 'badge t-deadline' }, '숨김')),
+        h('div', { class: 'ss' }, '눌러서 이름·색 수정')),
+      h('button', { class: 'ord', 'aria-label': '위로', disabled: i === 0, onclick: () => move(i, i - 1) }, '▲'),
+      h('button', { class: 'ord', 'aria-label': '아래로', disabled: i === list.length - 1, onclick: () => move(i, i + 1) }, '▼'))),
+    h('div', { class: 'pad' }, h('button', { class: 'btn ghost', style: 'width:100%', onclick: () => openCat({ label: '', color: COLORS.find(k => !CATS.some(c => c.color === k)) || 'blue', shared: false, active: true, sort: Math.max(0, ...CATS.map(x => x.sort)) + 10 }) }, '+ 유형 추가')));
+}
+function openCat(init) {
+  const c = { ...init };
+  const label = h('input', { type: 'text', maxlength: 12, value: c.label, placeholder: '예: 재고실사 (12자 이내)' });
+  const sw = h('div', { class: 'sw' });
+  const drawSw = () => sw.replaceChildren(...COLORS.map(k => h('button', { type: 'button', class: 'c-' + k + (c.color === k ? ' on' : ''), 'aria-label': k, 'aria-pressed': c.color === k ? 'true' : 'false', onclick: () => { c.color = k; drawSw(); } }, c.color === k ? '✓' : '')));
+  drawSw();
+  const shared = h('input', { type: 'checkbox', id: 'catshared' }); shared.checked = !!c.shared;
+  const save = async patch => {
+    const next = { ...c, label: label.value.trim(), shared: shared.checked, ...patch };
+    if (!next.label) return toast('유형 이름을 입력해 주세요.');
+    if (!next.active && CATS.filter(x => x.active && x.id !== next.id).length === 0) return toast('사용 중인 유형이 최소 1개는 있어야 합니다.');
+    try { await store.saveCategory(next); closeSheet(); toast('저장했습니다.'); refresh(); } catch (e) { toast(errText(e)); }
+  };
+  let armed = false;
+  const del = h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+    if (!armed) { armed = true; del.textContent = '정말 삭제'; return; }
+    try { await store.deleteCategory(c.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (e) { toast(errText(e)); armed = false; del.textContent = '삭제'; }
+  } }, '삭제');
+  sheet(h('h3', {}, c.id ? '유형 수정' : '유형 추가'),
+    h('form', { onsubmit: ev => { ev.preventDefault(); save({}); } },
+      h('label', {}, '이름'), label, h('label', {}, '색상'), sw,
+      h('label', { class: 'chk', for: 'catshared' }, shared, '부서 공통 일정 (팀 보기의 "부서 공통" 줄에 표시)'),
+      h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), h('button', { class: 'btn', type: 'submit' }, '저장')),
+      c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기')),
+      c.id && h('p', { class: 'help' }, '이름·색을 바꾸면 이 유형의 기존 일정에도 바로 반영됩니다. 이미 일정에 쓰인 유형은 삭제 대신 숨기기만 됩니다.')));
 }
 
 /* ---------- 아래에서 올라오는 창 ---------- */
@@ -622,7 +707,8 @@ function openDetail(e, back = null) {
     if (!armed) { armed = true; del.textContent = '정말 삭제'; return; }
     try { await store.remove(e.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (er) { toast(errText(er)); }
   } }, '삭제');
-  sheet(h('h3', {}, h('span', { class: 'badge t-' + e.type, style: 'margin:0 8px 0 0' }, TYPES[e.type].label), e.title),
+  sheet(h('h3', {}, e.title),
+    h('div', { class: 'tags', style: 'margin:-6px 0 10px' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), e.members.length > 0 && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
     h('div', { class: 'kv' }, h('span', {}, e.members.length ? '참여' : '담당'), names(e, 99)), e.members.length > 0 && h('div', { class: 'kv' }, h('span', {}, '배정'), nameOf(e.owner_id) + ' (관리자)'),
     h('div', { class: 'kv' }, h('span', {}, '기간'), range(e.start_date, e.end_date)),
     e.memo && h('div', { class: 'memo' }, e.memo),
@@ -630,16 +716,17 @@ function openDetail(e, back = null) {
     !canEdit(e) && h('p', { class: 'help' }, e.members.length ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.'));
 }
 function openForm(init) {
-  const ev = { type: 'field', title: '', memo: '', members: [], ...init }; ev.end_date = ev.end_date || ev.start_date;
+  const ev = { type: (CATS.find(c => c.active) || CATS[0]).id, title: '', memo: '', members: [], ...init }; ev.end_date = ev.end_date || ev.start_date;
   const before = { title: ev.title, start_date: ev.start_date, end_date: ev.end_date, members: new Set(ev.members) };
   const title = h('input', { type: 'text', maxlength: 60, value: ev.title });
   const s = h('input', { type: 'date', value: ev.start_date, onchange: () => { if (e.value < s.value) e.value = s.value; } }), e = h('input', { type: 'date', value: ev.end_date });
   const memo = h('textarea', { maxlength: 500, placeholder: '집합 시간, 장소 등 (선택)' }); memo.value = ev.memo || '';
   const seg = h('div', { class: 'seg' }), quick = h('div', { class: 'quick' });
   const drawType = () => {
-    seg.replaceChildren(...['field', 'leave', 'deadline', 'dept'].map(t => h('button', { type: 'button', class: ev.type === t ? 'on t-' + t : '', onclick: () => { ev.type = t; drawType(); } }, TYPES[t].label)));
-    title.placeholder = TYPES[ev.type].ph;
-    quick.replaceChildren(...(TYPES[ev.type].quick || []).map(q => h('button', { type: 'button', onclick: () => { title.value = q; } }, q)));
+    seg.replaceChildren(...CATS.filter(c => c.active || c.id === ev.type).map(c => h('button', { type: 'button', class: ev.type === c.id ? 'on fill c-' + c.color : '', onclick: () => { ev.type = c.id; drawType(); } }, c.label)));
+    const hint = HINTS[ev.type] || {};
+    title.placeholder = hint.ph || '일정 제목';
+    quick.replaceChildren(...(hint.quick || []).map(q => h('button', { type: 'button', onclick: () => { title.value = q; } }, q)));
   };
   drawType();
   // 관리자 전용: 이 일정에 넣을 팀원 선택
