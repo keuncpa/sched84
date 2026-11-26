@@ -32,6 +32,9 @@ button,input,textarea,select{font:inherit;color:inherit}
 button{cursor:pointer;border:0;background:none;padding:0}
 #app{max-width:760px;margin:0 auto;min-height:100%;display:flex;flex-direction:column}
 header{position:sticky;top:0;z-index:5;background:var(--brand);color:var(--brand-fg);padding:calc(env(safe-area-inset-top) + 10px) 14px 10px}
+header.busy::after{content:'';position:absolute;left:0;bottom:0;height:3px;width:32%;background:#ffd15c;border-radius:2px;animation:slide .9s linear infinite}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(320%)}}
+@media (prefers-reduced-motion:reduce){header.busy::after{animation:none;width:100%;opacity:.6}}
 .hrow{display:flex;align-items:center;gap:8px}
 .hrow h1{font-size:17px;margin:0;flex:1;font-weight:700}
 .upd{color:inherit;background:rgba(255,255,255,.14);border-radius:8px;height:32px;padding:0 11px;font-size:13px;white-space:nowrap}
@@ -181,7 +184,7 @@ input[type=date]::-webkit-date-and-time-value{text-align:left}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.15';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.16';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -317,8 +320,10 @@ function supaStore(sb) {
     async events(from, to) { return norm(ok(await sb.from('events').select(cols).lte('start_date', to).gte('end_date', from).order('start_date').limit(1000))); },
     async myEvents(uid, from) {
       // 내가 직접 넣은 일정 + 관리자가 나를 배정한 일정
-      const own = norm(ok(await sb.from('events').select(cols).eq('owner_id', uid).gte('end_date', from).order('start_date').limit(300)));
-      const ids = ok(await sb.from('events').select('id,event_members!inner(user_id)').eq('event_members.user_id', uid).gte('end_date', from).order('start_date').limit(150)).map(r => r.id);
+      const [ownRes, idRes] = await Promise.all([
+        sb.from('events').select(cols).eq('owner_id', uid).gte('end_date', from).order('start_date').limit(300),
+        sb.from('events').select('id,event_members!inner(user_id)').eq('event_members.user_id', uid).gte('end_date', from).order('start_date').limit(150)]);
+      const own = norm(ok(ownRes)), ids = ok(idRes).map(r => r.id);
       const asg = ids.length ? norm(ok(await sb.from('events').select(cols).in('id', ids))) : [];
       const all = new Map([...own, ...asg].map(e => [e.id, e]));
       return [...all.values()].filter(e => (e.members.length ? e.members : [e.owner_id]).includes(uid)).sort((a, b) => a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : 0);
@@ -449,17 +454,18 @@ async function boot() {
   } catch (e) { mount(h('div', { class: 'auth' }, h('h1', {}, DEPT + ' 일정표'), h('p', {}, errText(e)), h('button', { class: 'btn', onclick: () => location.reload() }, '다시 시도'))); }
 }
 async function loadProfiles() {
-  try { setCats(await store.categories()); } catch (e) { setCats(DEFAULT_CATS); }   // 유형 목록을 못 읽어도 기본 4개로 동작
-  try { setClients(await store.clients()); } catch (e) { setClients([]); }
+  // 세 가지를 동시에 요청 (하나씩 차례로 기다리지 않음). 유형·거래처는 못 읽어도 기본값으로 동작.
+  const [cats, clients, profiles] = await Promise.all([store.categories().catch(() => null), store.clients().catch(() => null), store.profiles()]);
+  setCats(cats); setClients(clients);
   if (S.client && !cli(S.client)) S.client = '';
-  S.profiles = await store.profiles();
+  S.profiles = profiles;
   S.pmap = Object.fromEntries(S.profiles.map(p => [p.id, p]));
   S.me = S.pmap[S.user.id] || null;
 }
 async function enter() {
   await loadProfiles();
   if (!S.me || !S.me.approved) return renderPending();
-  renderShell(); pushSync(); await refresh();
+  renderShell(); pushSync(); await refresh(); warmUp();
 }
 
 /* ---------- 앱 설치 안내 (브라우저로 열었을 때만 표시) ---------- */
@@ -604,7 +610,7 @@ function renderPending() {
       h('button', { class: 'btn', onclick: () => enter().catch(e => toast(errText(e))) }, '승인 확인'),
       h('button', { class: 'btn ghost', onclick: logout }, '로그아웃'))));
 }
-async function logout() { await pushLogout(); await store.signOut(); S.user = S.me = null; DEMO ? location.reload() : renderAuth('in'); }
+async function logout() { await pushLogout(); await store.signOut(); S.user = S.me = null; cache.cal = {}; cache.team = {}; cache.mine = null; DEMO ? location.reload() : renderAuth('in'); }
 
 /* ---------- 기본 틀 ---------- */
 let elNav, elMain, elTabs, elFab;
@@ -632,19 +638,48 @@ function renderChrome() {
     elNav.style.display = '';
   } else elNav.style.display = 'none';
 }
-let seq = 0;
+// 탭을 바꾸면 "가지고 있던 내용으로 먼저 즉시" 그리고, 서버에서 최신 내용을 받아 바뀐 게 있을 때만 다시 그림.
+// (예전에는 서버 응답을 기다린 뒤에야 화면이 바뀌어서 탭 전환이 굼떠 보였음)
+let seq = 0, firstLoad = false;   // firstLoad: 아직 한 번도 받아온 적 없는 화면 → '없습니다' 대신 '불러오는 중'
+const cache = { cal: {}, team: {}, mine: null };
+const baseSig = () => JSON.stringify([S.profiles, CATS, CLIENTS]);
+function busy(on) { const hd = document.querySelector('header'); if (hd) hd.classList.toggle('busy', on); }
 async function refresh() {
   if (!S.me) return;
   renderChrome();
-  const my = ++seq;
-  try {
-    if (S.view === 'cal') { const [a, b] = monthSpan(); S.events = await store.events(a, b); }
-    else if (S.view === 'team') S.events = await store.events(S.week, addDays(S.week, 6));
-    else if (S.view === 'mine') S.mine = await store.myEvents(S.user.id, addDays(today(), -7));
+  const my = ++seq, view = S.view;
+  const draw = () => ({ cal: viewCal, team: viewTeam, mine: viewMine, set: viewSet })[view]();
+  let key = null;
+  if (view === 'cal') { const [a, b] = monthSpan(); key = a + '~' + b; S.events = cache.cal[key] || []; }
+  else if (view === 'team') { key = S.week; S.events = cache.team[key] || []; }
+  else if (view === 'mine') S.mine = cache.mine || [];
+  firstLoad = view === 'mine' && !cache.mine;
+  const before = view === 'set' ? baseSig() : JSON.stringify(view === 'mine' ? S.mine : S.events);
+  draw();                                   // 1) 즉시 표시
+  busy(true);
+  let fresh = null, failed = false;
+  try {                                     // 2) 최신 내용 받아오기
+    if (view === 'cal') { const [a, b] = monthSpan(); fresh = await store.events(a, b); cache.cal[key] = fresh; }
+    else if (view === 'team') { fresh = await store.events(key, addDays(key, 6)); cache.team[key] = fresh; }
+    else if (view === 'mine') { fresh = await store.myEvents(S.user.id, addDays(today(), -7)); cache.mine = fresh; }
     else await loadProfiles();
-  } catch (e) { toast(errText(e)); }
-  if (my !== seq) return;
-  ({ cal: viewCal, team: viewTeam, mine: viewMine, set: viewSet })[S.view]();
+  } catch (e) { failed = true; toast(errText(e)); }
+  if (my !== seq) return;                   // 그 사이 다른 탭으로 넘어갔으면 여기서 끝
+  busy(false);
+  if (failed) { if (firstLoad) { firstLoad = false; draw(); } return; }
+  if (firstLoad) { firstLoad = false; S.mine = fresh; draw(); return; }
+  if (view === 'mine') S.mine = fresh; else if (view !== 'set') S.events = fresh;
+  const after = view === 'set' ? baseSig() : JSON.stringify(fresh);
+  if (after !== before) draw();             // 3) 바뀐 게 있을 때만 다시 그림 (입력 중인 칸·스크롤을 건드리지 않게)
+}
+// 첫 화면이 뜬 뒤 다른 탭 내용을 미리 받아 둠 → 처음 넘길 때도 바로 보임
+function warmUp() {
+  setTimeout(() => {
+    if (!S.me || DEMO) return;
+    const w = S.week;
+    store.events(w, addDays(w, 6)).then(ev => { cache.team[w] = ev; }).catch(() => {});
+    store.myEvents(S.user.id, addDays(today(), -7)).then(m => { cache.mine = m; }).catch(() => {});
+  }, 800);
 }
 function monthSpan() {
   const first = parse(S.month), start = addDays(S.month, -first.getDay());
@@ -752,7 +787,7 @@ async function openClient(id, back = null) {
 /* ---------- 내 일정 ---------- */
 function viewMine() {
   elMain.replaceChildren(h('h2', {}, '내 일정 (최근 1주 ~ 예정)'),
-    h('div', { class: 'card list' }, S.mine.length ? S.mine.map(e => eventItem(e, false)) : h('div', { class: 'empty' }, '내 일정이 없습니다. 오른쪽 아래 + 버튼으로 추가하세요.')));
+    h('div', { class: 'card list' }, S.mine.length ? S.mine.map(e => eventItem(e, false)) : h('div', { class: 'empty' }, firstLoad ? '불러오는 중…' : '내 일정이 없습니다. 오른쪽 아래 + 버튼으로 추가하세요.')));
 }
 
 /* ---------- 설정 ---------- */
