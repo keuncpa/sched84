@@ -148,7 +148,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.5';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.6';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -757,7 +757,12 @@ function openForm(init) {
       if (jobs.length) {   // 알림은 저장이 끝난 뒤 따로 보냄 (알림이 실패해도 일정은 저장된 상태)
         const rs = await Promise.all(jobs.map(j => j.then(r => r || {}, () => null)));
         if (rs.some(r => r === null)) toast('저장했습니다. 다만 알림 전송에는 실패했습니다.');
-        else if (!DEMO) { const sent = rs.reduce((n, r) => n + (r.sent || 0), 0); toast(sent ? `저장했습니다. 알림 ${sent}건을 보냈습니다.` : '저장했습니다. (알림을 켠 팀원 기기가 없어 알림은 가지 않았습니다)'); }
+        else if (!DEMO) {
+          const sum = k => rs.reduce((n, r) => n + (r[k] || 0), 0), sent = sum('sent'), failed = sum('failed'), devices = sum('devices');
+          if (failed) toast(`저장했습니다. 다만 알림 ${failed}건이 전송되지 않았습니다.` + (sent ? ` (${sent}건은 전송)` : ''));   // 기기는 있는데 발송이 거부된 경우
+          else if (sent) toast(`저장했습니다. 알림 ${sent}건을 보냈습니다.`);
+          else if (!devices) toast('저장했습니다. (알림을 켠 팀원 기기가 없어 알림은 가지 않았습니다)');
+        }
       }
     } catch (er) { toast(errText(er)); btn.disabled = false; }
   } },

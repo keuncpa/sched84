@@ -65,6 +65,18 @@ async function vapidHeader(endpoint) {
 }
 
 /* ---------- 본문 암호화 (RFC 8291, aes128gcm) ---------- */
+async function vapidCheck() {
+  const d = (Deno.env.get("VAPID_PRIVATE_KEY") || "").trim();
+  if (!d) return "missing";
+  try {
+    const data = enc.encode("check");
+    const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, await vapidKey(), data);
+    const pub = await crypto.subtle.importKey("raw", b64uToBytes(VAPID_PUBLIC), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    return (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pub, sig, data)) ? "ok" : "mismatch";
+  } catch (e) {
+    return "invalid (" + d.length + " chars): " + String(e).slice(0, 80);
+  }
+}
 async function hkdf(salt, ikm, info, len) {
   const key = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
   return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, key, len * 8));
@@ -107,7 +119,9 @@ async function sendPush(sub, payloadText) {
     },
     body,
   });
-  return res.status;
+  const detail = res.ok ? "" : (await res.text().catch(() => "")).slice(0, 160);
+  if (!res.ok) console.log("push failed", new URL(sub.endpoint).host, res.status, detail);
+  return { status: res.status, detail };
 }
 
 /* ---------- 알림 문구 ---------- */
@@ -138,6 +152,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function handler(req) {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method === "GET") return json({ vapid: await vapidCheck() });
   if (req.method !== "POST") return json({ error: "method" }, 405);
   const authorization = req.headers.get("Authorization");
   if (!authorization) return json({ error: "login required" }, 401);
@@ -155,11 +170,11 @@ async function handler(req) {
   if (!event || !subs.length) return json({ sent: 0, failed: 0, devices: 0 });
 
   const payload = JSON.stringify(message(event, kind, input.event_id));
-  const results = await Promise.all(subs.map((s) => sendPush(s, payload).catch(() => 0)));
-  const gone = subs.filter((_s, i) => results[i] === 404 || results[i] === 410).map((s) => s.endpoint);
+  const results = await Promise.all(subs.map((s) => sendPush(s, payload).catch((e) => { console.log("push error", String(e)); return { status: 0, detail: String(e).slice(0, 160) }; })));
+  const gone = subs.filter((_s, i) => results[i].status === 404 || results[i].status === 410).map((s) => s.endpoint);
   if (gone.length) await rpc("push_prune", { p_endpoints: gone }, authorization).catch(() => {});
-  const sent = results.filter((c) => c >= 200 && c < 300).length;
-  return json({ sent, failed: results.length - sent, devices: subs.length });
+  const sent = results.filter((r) => r.status >= 200 && r.status < 300).length;
+  return json({ sent, failed: results.length - sent, devices: subs.length, errors: results.filter((r) => r.status < 200 || r.status >= 300).map((r) => r.status + " " + r.detail) });
 }
 
 Deno.serve(handler);
