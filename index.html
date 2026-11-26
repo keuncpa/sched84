@@ -157,6 +157,10 @@ button.person{cursor:pointer}
 .pick button{border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13.5px}
 .pick button.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
 .pick button.all{border-style:dashed;color:var(--sub)}
+.roles{margin-top:10px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.roles>div{display:flex;align-items:center;gap:8px;padding:7px 10px 7px 12px;border-bottom:1px solid var(--line)}.roles>div:last-child{border-bottom:0}
+.roles span{flex:1;font-size:14.5px;font-weight:600;min-width:0}
+.roles select{flex:none;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:6px 8px;font-size:14.5px;color:var(--text);min-height:36px}
 #toast{position:fixed;left:50%;bottom:140px;transform:translateX(-50%);z-index:20;background:#111;color:#fff;border-radius:10px;padding:10px 16px;font-size:14px;max-width:86%;display:none}
 </style>
 </head>
@@ -169,7 +173,7 @@ button.person{cursor:pointer}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.11';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.12';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -193,6 +197,9 @@ const DEFAULT_CATS = [
   { id: 'dept', label: '부서 행사', color: 'purple', shared: true, active: true, sort: 40 },
 ];
 const COLORS = ['blue', 'green', 'red', 'purple', 'orange', 'teal', 'pink', 'gray'];
+// 배정할 때 사람별로 고르는 역할(그 일정에서의 역할). 위에서부터 직급 순서이며, 상세 화면도 이 순서로 정렬.
+const ROLES = ['매니저', '인차지', '시니어', '스탭'];
+const roleRank = r => { const i = ROLES.indexOf(r); return i < 0 ? ROLES.length : i; };
 const HINTS = {   // 기본 유형에만 있는 입력 도우미
   field: { ph: '예: A사 기말감사' }, deadline: { ph: '예: A사 감사보고서 발행' }, dept: { ph: '예: 부서 회의' },
   leave: { ph: '예: 연차', quick: ['연차', '오전 반차', '오후 반차', '교육', '기타 부재'] },
@@ -272,8 +279,8 @@ const authStorage = {
 /* ---------- 저장소: 실제 서버(Supabase) ---------- */
 function supaStore(sb) {
   const ok = ({ data, error }) => { if (error) throw error; return data; };
-  const cols = 'id,owner_id,type,title,start_date,end_date,memo,client_id,event_members(user_id)';
-  const norm = rows => rows.map(({ event_members, ...e }) => ({ ...e, members: (event_members || []).map(m => m.user_id) }));
+  const cols = 'id,owner_id,type,title,start_date,end_date,memo,client_id,event_members(user_id,role)';
+  const norm = rows => rows.map(({ event_members, ...e }) => ({ ...e, members: (event_members || []).map(m => m.user_id), roles: Object.fromEntries((event_members || []).filter(m => m.role).map(m => [m.user_id, m.role])) }));
   return {
     async session() { const { data } = await sb.auth.getSession(); return data.session ? data.session.user : null; },
     async signIn(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
@@ -315,9 +322,10 @@ function supaStore(sb) {
       if (!data || !data.length) throw new Error('permission denied');
       return data[0].id;
     },
-    async setMembers(id, add, del) {
+    async setMembers(id, add, del, roles = {}, changed = []) {   // changed: 계속 배정돼 있으면서 역할만 바뀐 사람
       if (del.length) ok(await sb.from('event_members').delete().eq('event_id', id).in('user_id', del));
-      if (add.length) ok(await sb.from('event_members').insert(add.map(u => ({ event_id: id, user_id: u }))));
+      if (add.length) ok(await sb.from('event_members').insert(add.map(u => ({ event_id: id, user_id: u, role: roles[u] || null }))));
+      for (const u of changed) ok(await sb.from('event_members').update({ role: roles[u] || null }).eq('event_id', id).eq('user_id', u));
     },
     async notify(id, users, kind) { const { data, error } = await sb.functions.invoke('notify', { body: { event_id: id, user_ids: users, kind } }); if (error) throw error; return data; },
     async registerPush(endpoint, p256dh, auth) { ok(await sb.rpc('register_push', { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth })); },
@@ -337,11 +345,11 @@ function demoStore() {
   try { db = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { /* 저장소를 못 쓰는 환경 */ }
   if (!db) {
     const P = (id, name, title, approved = true, is_admin = false) => ({ id, name, title, approved, is_admin });
-    const E = (id, owner_id, type, title, a, b, memo = '', members = []) => ({ id, owner_id, type, title, start_date: addDays(mon, a), end_date: addDays(mon, b), memo, members });
+    const E = (id, owner_id, type, title, a, b, memo = '', members = [], roles = {}) => ({ id, owner_id, type, title, start_date: addDays(mon, a), end_date: addDays(mon, b), memo, members, roles });
     db = {
       profiles: [P('me', '나(데모)', '수습', true, true), P('p2', '김회계', '매니저'), P('p3', '이감사', '시니어'), P('p4', '박결산', '시니어'), P('p5', '최신입', '수습', false)],
       events: [
-        E('e1', 'p2', 'field', 'A사 중간감사', 0, 2, '현장 09:30 집합', ['me', 'p2', 'p4']), E('e3', 'p3', 'field', 'B사 내부회계 검토', 1, 4),
+        E('e1', 'p2', 'field', 'A사 중간감사', 0, 2, '현장 09:30 집합', ['me', 'p2', 'p4'], { me: '스탭', p2: '매니저', p4: '인차지' }), E('e3', 'p3', 'field', 'B사 내부회계 검토', 1, 4),
         E('e4', 'p4', 'leave', '연차', 3, 4), E('e5', 'me', 'leave', '교육', 4, 4, '집합교육'), E('e6', 'p2', 'deadline', 'C사 검토보고서 발행', 4, 4),
         E('e7', 'p2', 'dept', '부서 회의', 0, 0, '16:00 회의실'), E('e8', 'p3', 'field', 'D사 재고실사', 7, 8), E('e9', 'me', 'field', 'B사 중간감사', 7, 11),
         E('e10', 'me', 'field', 'E사 중간감사', 8, 11, '', ['p3', 'p4']), E('e11', 'p2', 'dept', '부서 송년회', 10, 10), E('e12', 'me', 'deadline', 'A사 조서 정리 마감', 9, 9),
@@ -351,7 +359,7 @@ function demoStore() {
     db.events.forEach(e => { const k = db.clients.find(c => e.title.startsWith(c.name)); if (k) e.client_id = k.id; });
   }
   db.clients = db.clients || [];
-  db.events.forEach(e => { e.members = e.members || []; });
+  db.events.forEach(e => { e.members = e.members || []; e.roles = e.roles || {}; });
   db.categories = db.categories || JSON.parse(JSON.stringify(DEFAULT_CATS));
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 무시 */ } };
   const cp = x => JSON.parse(JSON.stringify(x));
@@ -375,10 +383,13 @@ function demoStore() {
     async save(ev) {
       const { owner_id, ...rest } = ev;
       if (ev.id) Object.assign(db.events.find(e => e.id === ev.id), rest);
-      else { ev = { ...ev, id: 'e' + Date.now(), members: [] }; db.events.push(ev); }
+      else { ev = { ...ev, id: 'e' + Date.now(), members: [], roles: {} }; db.events.push(ev); }
       persist(); return ev.id;
     },
-    async setMembers(id, add, del) { const e = db.events.find(x => x.id === id); e.members = e.members.filter(u => !del.includes(u)).concat(add); persist(); },
+    async setMembers(id, add, del, roles = {}, changed = []) {
+      const e = db.events.find(x => x.id === id); e.members = e.members.filter(u => !del.includes(u)).concat(add);
+      e.roles = Object.fromEntries(e.members.map(u => [u, add.includes(u) || changed.includes(u) ? roles[u] : (e.roles || {})[u]]).filter(([, r]) => r)); persist();
+    },
     async notify(id, users) { return { sent: 0, failed: 0, devices: 0, demo: users.length }; },
     async registerPush() {}, async unregisterPush() {},
     async remove(id) { db.events = db.events.filter(e => e.id !== id); persist(); },
@@ -650,7 +661,7 @@ function eventItem(e, showWho = true, back = null) {
   return h('button', { class: 'item', onclick: () => openDetail(e, back) },
     h('span', { class: 'bar ' + ec(e) }),
     h('span', { style: 'min-width:0' }, h('div', { class: 'tt' }, e.title),
-      h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), cli(e.client_id) && h('span', { class: 'badge fill c-' + cli(e.client_id).color }, cli(e.client_id).name), e.members && e.members.length > 0 && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
+      h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), cli(e.client_id) && h('span', { class: 'badge fill c-' + cli(e.client_id).color }, cli(e.client_id).name)),
       h('div', { class: 'ss' }, [showWho && names(e), range(e.start_date, e.end_date)].filter(Boolean).join(' · '))));
 }
 
@@ -890,19 +901,21 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
   } }, '삭제');
   const t = today(), toStart = dayCount(t, e.start_date) - 1;
   const when = t > e.end_date ? '종료된 일정' : t >= e.start_date ? (e.start_date === e.end_date ? '오늘' : `진행 중 · ${dayCount(t, e.end_date)}일 남음`) : toStart === 1 ? '내일 시작' : `${toStart}일 뒤 시작`;
-  const who = whoOf(e).map(id => S.pmap[id] || { name: '?', title: '' }).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-  const assigned = e.members.length > 0, kk = cli(e.client_id);
+  const assigned = e.members.length > 0, kk = cli(e.client_id), er = e.roles || {};
+  // 배정 일정이면 그 일정에서의 역할, 개인 일정이면 프로필 직급을 이름 옆에 표시
+  const who = whoOf(e).map(id => { const q = S.pmap[id] || { name: '?', title: '' }; return { name: q.name, left: !!q.left_at, tag: assigned ? (er[id] || '') : (q.title || '') }; })
+    .sort((a, b) => (assigned ? roleRank(a.tag) - roleRank(b.tag) : 0) || a.name.localeCompare(b.name, 'ko'));
   sheetAt('full',
     h('div', { class: 'dtop' }, h('button', { class: 'btn ghost sm', onclick: back || closeSheet }, back ? '‹ 목록으로' : '‹ 닫기')),
     h('div', { class: 'dbody' },
-      h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), assigned && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
+      h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label)),
       h('h2', { class: 'dtitle' }, e.title),
       kk && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '거래처'), h('button', { class: 'person', onclick: () => openClient(kk.id, () => openDetail(e, back)) }, h('i', { class: 'dot c-' + kk.color }), kk.name, h('small', {}, '일정 모두 보기 ›'))),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '기간'),
         h('div', { class: 'dbig' }, e.start_date === e.end_date ? md(e.start_date) : `${md(e.start_date)} – ${md(e.end_date)}`),
         h('div', { class: 'ss' }, [e.start_date === e.end_date ? null : `총 ${dayCount(e.start_date, e.end_date)}일`, when].filter(Boolean).join(' · '))),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, assigned ? `참여 팀원 ${who.length}명` : '담당'),
-        h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, (p.left_at || p.title) && h('small', {}, p.left_at ? '퇴사' : p.title))))),
+        h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, (p.tag || p.left) && h('small', {}, [p.tag, p.left && '퇴사'].filter(Boolean).join(' · ')))))),
       assigned && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '배정한 사람'), h('div', {}, nameOf(e.owner_id) + ' (관리자)')),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '메모'), e.memo ? h('div', { class: 'memo', style: 'margin-top:0' }, e.memo) : h('div', { class: 'ss' }, '메모 없음')),
       !canEdit(e) && h('p', { class: 'help' }, assigned ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.')),
@@ -926,11 +939,24 @@ function openForm(init) {
   };
   drawType();
   // 관리자 전용: 이 일정에 넣을 팀원 선택
-  const sel = new Set(ev.members), pick = h('div', { class: 'pick' });
+  const sel = new Set(ev.members), pick = h('div', { class: 'pick' }), rolesBox = h('div', {});
+  const roles = { ...(ev.roles || {}) }, roles0 = { ...(ev.roles || {}) };
+  const guessRole = p => ROLES.find(r => (p.title || '').includes(r)) || '';   // 프로필 직급에 같은 말이 있으면 그걸 기본값으로
   const team = S.profiles.filter(p => p.approved || sel.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, 'ko'));   // 이미 배정돼 있던 퇴사자는 해제할 수 있게 표시
-  const drawPick = () => pick.replaceChildren(
-    ...team.map(p => h('button', { type: 'button', class: sel.has(p.id) ? 'on' : '', 'aria-pressed': sel.has(p.id) ? 'true' : 'false', onclick: () => { if (sel.has(p.id)) sel.delete(p.id); else if (p.approved) sel.add(p.id); drawPick(); } }, p.name + (p.approved ? '' : ' (퇴사)'))),
-    h('button', { type: 'button', class: 'all', onclick: () => { const on = team.filter(p => p.approved), all = on.every(p => sel.has(p.id)); on.forEach(p => all ? sel.delete(p.id) : sel.add(p.id)); drawPick(); } }, team.filter(p => p.approved).every(p => sel.has(p.id)) ? '전체 해제' : '전체 선택'));
+  const drawPick = () => { paintPick(); drawRoles(); };   // 배정 칩과 역할 목록을 함께 다시 그림 (drawRoles 는 바로 아래에서 정의)
+  const paintPick = () => pick.replaceChildren(
+    ...team.map(p => h('button', { type: 'button', class: sel.has(p.id) ? 'on' : '', 'aria-pressed': sel.has(p.id) ? 'true' : 'false', onclick: () => { if (sel.has(p.id)) sel.delete(p.id); else if (p.approved) { sel.add(p.id); if (roles[p.id] == null) roles[p.id] = guessRole(p); } drawPick(); } }, p.name + (p.approved ? '' : ' (퇴사)'))),
+    h('button', { type: 'button', class: 'all', onclick: () => { const on = team.filter(p => p.approved), all = on.every(p => sel.has(p.id)); on.forEach(p => { if (all) sel.delete(p.id); else { sel.add(p.id); if (roles[p.id] == null) roles[p.id] = guessRole(p); } }); drawPick(); } }, team.filter(p => p.approved).every(p => sel.has(p.id)) ? '전체 해제' : '전체 선택'));
+  // 고른 사람마다 이 일정에서의 역할을 지정 (비워 둘 수 있음)
+  const drawRoles = () => {
+    const chosen = team.filter(p => sel.has(p.id));
+    rolesBox.replaceChildren(...(chosen.length ? [h('label', {}, '역할 지정 (선택)'), h('div', { class: 'roles' }, chosen.map(p => {
+      const rs = h('select', { 'aria-label': p.name + ' 역할', onchange: () => { roles[p.id] = rs.value; } }, h('option', { value: '' }, '역할 없음'), ROLES.map(r => h('option', { value: r }, r)),
+        roles[p.id] && !ROLES.includes(roles[p.id]) && h('option', { value: roles[p.id] }, roles[p.id]));
+      rs.value = roles[p.id] || '';
+      return h('div', {}, h('span', {}, p.name + (p.approved ? '' : ' (퇴사)')), rs);
+    }))] : []));
+  };
   drawPick();
   const btn = h('button', { class: 'btn', type: 'submit' }, '저장');
   sheet(h('h3', {}, ev.id ? '일정 수정' : '일정 추가'), h('form', { onsubmit: async x => {
@@ -944,7 +970,8 @@ function openForm(init) {
       let jobs = [];
       if (S.me.is_admin) {
         const add = [...sel].filter(u => !before.members.has(u)), del = [...before.members].filter(u => !sel.has(u)), stay = [...sel].filter(u => before.members.has(u));
-        if (add.length || del.length) await store.setMembers(id, add, del);
+        const reroled = stay.filter(u => (roles[u] || '') !== (roles0[u] || ''));
+        if (add.length || del.length || reroled.length) await store.setMembers(id, add, del, roles, reroled);
         const changed = ev.id && (before.title !== title.value.trim() || before.start_date !== s.value || before.end_date !== e.value);
         if (add.length) jobs.push(store.notify(id, add, 'assign'));
         if (changed && stay.length) jobs.push(store.notify(id, stay, 'update'));
@@ -966,7 +993,7 @@ function openForm(init) {
     CLIENTS.length > 0 && h('label', {}, '거래처 (선택)'), CLIENTS.length > 0 && ksel,
     h('div', { class: 'row2' }, h('div', {}, h('label', {}, '시작일'), s), h('div', {}, h('label', {}, '종료일'), e)),
     h('label', {}, '메모'), memo,
-    S.me.is_admin && h('label', {}, '팀원 배정 (관리자) — 선택한 팀원의 일정표에 이 일정이 들어갑니다'), S.me.is_admin && pick,
+    S.me.is_admin && h('label', {}, '팀원 배정 (관리자) — 선택한 팀원의 일정표에 이 일정이 들어갑니다'), S.me.is_admin && pick, S.me.is_admin && rolesBox,
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), btn)));
 }
 
