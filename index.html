@@ -17,13 +17,13 @@
   --bg:#f4f5f7; --card:#fff; --text:#16181d; --sub:#6b7280; --line:#e3e5ea; --brand:#1e3a8a; --brand-fg:#fff;
   --field-bg:#dbe7ff; --field-fg:#1d3fae; --leave-bg:#d8f3df; --leave-fg:#12692f;
   --deadline-bg:#ffdcdc; --deadline-fg:#b01919; --dept-bg:#eadcff; --dept-fg:#5b21b6;
-  --sun:#d92c2c; --sat:#2456d6; --sel:#eef2ff;
+  --sun:#d92c2c; --sat:#2456d6; --sel:#eef2ff; --today:#1e3a8a; --today-bg:#fff7db;
 }
 @media (prefers-color-scheme:dark){:root{
   --bg:#0f1115; --card:#1a1d24; --text:#eceef2; --sub:#9aa1ad; --line:#2b2f39; --brand:#16234d; --brand-fg:#fff;
   --field-bg:#1c2f66; --field-fg:#c3d4ff; --leave-bg:#143d22; --leave-fg:#b4ecc4;
   --deadline-bg:#551a1a; --deadline-fg:#ffc4c4; --dept-bg:#3a2466; --dept-fg:#dccbff;
-  --sun:#ff7a7a; --sat:#8fb0ff; --sel:#232a40;
+  --sun:#ff7a7a; --sat:#8fb0ff; --sel:#232a40; --today:#ffd15c; --today-bg:#3a3111;
 }}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
@@ -52,7 +52,12 @@ main{flex:1;padding:10px 10px 96px}
 .cell.out .num{opacity:.35}
 .cell.sel{background:var(--sel)}
 .num{align-self:flex-start;display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;font-size:12.5px;border-radius:11px;margin-bottom:1px}
-.today .num{background:var(--brand);color:#fff;font-weight:700}
+.today .num{background:var(--today);color:#fff;font-weight:700}
+.cell.today{background:var(--today-bg);box-shadow:inset 0 0 0 2.5px var(--today);border-radius:6px;position:relative;z-index:1}
+.cell.today.sel{background:var(--today-bg)}
+.todaytag{font-size:10px;font-weight:700;color:var(--today);margin-left:2px;vertical-align:1px}
+.numrow{display:flex;align-items:center}
+@media (prefers-color-scheme:dark){.today .num{color:#1a1400}}
 .sun{color:var(--sun)} .sat{color:var(--sat)}
 .chip{display:block;font-size:10.5px;line-height:1.35;border-radius:4px;padding:0 3px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:clip}
 .more{font-size:10.5px;color:var(--sub);padding-left:3px;margin-top:1px;display:block}
@@ -130,7 +135,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.3';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.4';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -547,7 +552,7 @@ function viewCal() {
   for (let i = 0; i < rows * 7; i++) {
     const d = addDays(start, i), evs = onDay(d), dw = i % 7, max = 3;
     grid.append(h('button', { class: 'cell' + (d.slice(0, 7) !== mon ? ' out' : '') + (d === t ? ' today' : '') + (d === S.sel ? ' sel' : ''), onclick: () => { S.sel = d; viewCal(); openDay(d); } },
-      h('span', { class: 'num' + (dw === 0 ? ' sun' : dw === 6 ? ' sat' : '') }, parse(d).getDate()),
+      h('span', { class: 'numrow' }, h('span', { class: 'num' + (dw === 0 ? ' sun' : dw === 6 ? ' sat' : '') }, parse(d).getDate()), d === t && h('span', { class: 'todaytag' }, '오늘')),
       evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip t-' + e.type }, chipText(e))),
       evs.length > max && h('span', { class: 'more' }, `+${evs.length - (max - 1)}`)));
   }
