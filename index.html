@@ -128,6 +128,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
+const APP_VERSION = '2026-11-26.2';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -665,6 +666,17 @@ function openForm(init) {
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), btn)));
 }
 
+// 새 버전 확인: 앱을 켜 둔 채로 두어도 다음에 화면을 볼 때 최신으로 바뀌게 함
+async function checkVersion() {
+  if (DEMO || S.sheet) return;
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return;
+    const v = (await r.json()).v;
+    if (v && v !== APP_VERSION && !location.search.includes('v=' + encodeURIComponent(v))) location.replace(location.pathname + '?v=' + encodeURIComponent(v));
+  } catch (e) { /* 오프라인 등은 무시 */ }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
+setTimeout(checkVersion, 3000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.me && S.me.approved && !S.sheet && S.view !== 'set') refresh(); });
 if (!DEMO && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 boot();
