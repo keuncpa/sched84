@@ -34,6 +34,8 @@ button{cursor:pointer;border:0;background:none;padding:0}
 header{position:sticky;top:0;z-index:5;background:var(--brand);color:var(--brand-fg);padding:calc(env(safe-area-inset-top) + 10px) 14px 10px}
 .hrow{display:flex;align-items:center;gap:8px}
 .hrow h1{font-size:17px;margin:0;flex:1;font-weight:700}
+.upd{color:inherit;background:rgba(255,255,255,.14);border-radius:8px;height:32px;padding:0 11px;font-size:13px;white-space:nowrap}
+.upd:disabled{opacity:.5}
 .nav{display:flex;align-items:center;gap:4px;margin-top:8px}
 .nav .label{flex:1;font-size:19px;font-weight:700}
 .nav button{color:inherit;min-width:40px;height:36px;border-radius:8px;background:rgba(255,255,255,.14);font-size:15px;padding:0 10px}
@@ -148,7 +150,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.7';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.8';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -528,7 +530,7 @@ function renderShell() {
   elNav = h('div', { class: 'nav' }); elMain = h('main', {});
   elTabs = h('div', {}); elFab = h('button', { class: 'fab', 'aria-label': '일정 추가', onclick: () => openForm({ start_date: S.view === 'cal' ? S.sel : today() }) }, '+');
   mount(
-    h('header', {}, h('div', { class: 'hrow' }, h('h1', {}, DEPT + ' 일정표')), elNav),
+    h('header', {}, h('div', { class: 'hrow' }, h('h1', {}, DEPT + ' 일정표'), h('button', { class: 'upd', 'aria-label': '새로고침', onclick: ev => manualUpdate(ev.currentTarget) }, '↻ 새로고침')), elNav),
     installBar(), pushBar(),
     DEMO && h('div', { class: 'demo' }, '데모 모드 — 서버 연결 전 미리보기입니다. 입력 내용은 이 기기에만 저장됩니다.'),
     elMain, h('nav', { class: 'tabs' }, elTabs), elFab);
@@ -639,7 +641,8 @@ function viewSet() {
     !DEMO && h('h2', {}, '배정 알림'), !DEMO && pushCard(),
     h('h2', {}, '폰 홈 화면에 앱으로 추가'), h('div', { class: 'card pad help' },
       h('div', {}, '아이폰: Safari로 접속 → 아래 공유 버튼 → "홈 화면에 추가"'), h('div', {}, '안드로이드: Chrome으로 접속 → 오른쪽 위 ⋮ 메뉴 → "홈 화면에 추가" 또는 "앱 설치"')),
-    h('div', { class: 'btns', style: 'margin:18px 2px' }, h('button', { class: 'btn ghost', onclick: logout }, DEMO ? '데모 데이터 초기화' : '로그아웃'))].filter(Boolean));
+    h('div', { class: 'btns', style: 'margin:18px 2px' }, h('button', { class: 'btn ghost', onclick: logout }, DEMO ? '데모 데이터 초기화' : '로그아웃')),
+    h('p', { class: 'help', style: 'text-align:center' }, '앱 버전 ' + APP_VERSION)].filter(Boolean));
 }
 
 function delAskCard() {
@@ -805,6 +808,25 @@ async function checkVersion() {
   } catch (e) { /* 오프라인 등은 무시 */ }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
+// 상단 [새로고침] 버튼: 새 버전이 있으면 앱을 새 버전으로 바꾸고, 없으면 일정·구성원·유형을 서버에서 다시 받아옴
+async function manualUpdate(btn) {
+  btn.disabled = true; const label = btn.textContent; btn.textContent = '확인 중…';
+  try {
+    if (!DEMO) {
+      const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+      const v = r.ok ? (await r.json()).v : null;
+      if (v && v !== APP_VERSION) {
+        toast('새 버전으로 업데이트합니다…');
+        try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) await Promise.race([reg.update(), new Promise(res => setTimeout(res, 2500))]); } catch (e) { /* 무시 */ }
+        return location.replace(location.pathname + '?v=' + encodeURIComponent(v) + '&t=' + Date.now());
+      }
+    }
+    closeSheet(); await loadProfiles();
+    if (!S.me || !S.me.approved) return renderPending();
+    await refresh(); toast('최신 상태입니다.');
+  } catch (e) { toast(errText(e)); }
+  btn.disabled = false; btn.textContent = label;
+}
 setTimeout(checkVersion, 3000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.me && S.me.approved && !S.sheet && S.view !== 'set') refresh(); });
 if (!DEMO && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
