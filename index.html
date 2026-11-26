@@ -112,6 +112,10 @@ textarea{min-height:72px;resize:vertical}
 .install{background:var(--sel);border-bottom:1px solid var(--line);padding:10px 12px 10px 14px;font-size:13.5px;line-height:1.5;display:flex;gap:10px;align-items:center}
 .install>div{flex:1}.install .x{font-size:22px;color:var(--sub);padding:0 6px}.install .btn{margin-top:6px;display:inline-block}
 .keep{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:14.5px;color:var(--text)}.keep input{width:20px;height:20px;margin:0}
+.pick{display:flex;flex-wrap:wrap;gap:6px}
+.pick button{border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13.5px}
+.pick button.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.pick button.all{border-style:dashed;color:var(--sub)}
 #toast{position:fixed;left:50%;bottom:140px;transform:translateX(-50%);z-index:20;background:#111;color:#fff;border-radius:10px;padding:10px 16px;font-size:14px;max-width:86%;display:none}
 </style>
 </head>
@@ -198,7 +202,8 @@ const authStorage = {
 /* ---------- 저장소: 실제 서버(Supabase) ---------- */
 function supaStore(sb) {
   const ok = ({ data, error }) => { if (error) throw error; return data; };
-  const cols = 'id,owner_id,type,title,start_date,end_date,memo';
+  const cols = 'id,owner_id,type,title,start_date,end_date,memo,event_members(user_id)';
+  const norm = rows => rows.map(({ event_members, ...e }) => ({ ...e, members: (event_members || []).map(m => m.user_id) }));
   return {
     async session() { const { data } = await sb.auth.getSession(); return data.session ? data.session.user : null; },
     async signIn(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
@@ -207,14 +212,29 @@ function supaStore(sb) {
     async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname.replace(/index\.html$/, '') })); },
     async setPassword(pw) { ok(await sb.auth.updateUser({ password: pw })); },
     async profiles() { return ok(await sb.from('profiles').select('id,name,title,approved,is_admin').order('name')); },
-    async events(from, to) { return ok(await sb.from('events').select(cols).lte('start_date', to).gte('end_date', from).order('start_date').limit(1000)); },
-    async myEvents(uid, from) { return ok(await sb.from('events').select(cols).eq('owner_id', uid).gte('end_date', from).order('start_date').limit(300)); },
+    async events(from, to) { return norm(ok(await sb.from('events').select(cols).lte('start_date', to).gte('end_date', from).order('start_date').limit(1000))); },
+    async myEvents(uid, from) {
+      // 내가 직접 넣은 일정 + 관리자가 나를 배정한 일정
+      const own = norm(ok(await sb.from('events').select(cols).eq('owner_id', uid).gte('end_date', from).order('start_date').limit(300)));
+      const ids = ok(await sb.from('events').select('id,event_members!inner(user_id)').eq('event_members.user_id', uid).gte('end_date', from).order('start_date').limit(150)).map(r => r.id);
+      const asg = ids.length ? norm(ok(await sb.from('events').select(cols).in('id', ids))) : [];
+      const all = new Map([...own, ...asg].map(e => [e.id, e]));
+      return [...all.values()].filter(e => (e.members.length ? e.members : [e.owner_id]).includes(uid)).sort((a, b) => a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : 0);
+    },
     async save(ev) {
       const row = { type: ev.type, title: ev.title, start_date: ev.start_date, end_date: ev.end_date, memo: ev.memo };
       const data = ev.id ? ok(await sb.from('events').update(row).eq('id', ev.id).select('id'))
                          : ok(await sb.from('events').insert({ ...row, owner_id: ev.owner_id }).select('id'));
       if (!data || !data.length) throw new Error('permission denied');
+      return data[0].id;
     },
+    async setMembers(id, add, del) {
+      if (del.length) ok(await sb.from('event_members').delete().eq('event_id', id).in('user_id', del));
+      if (add.length) ok(await sb.from('event_members').insert(add.map(u => ({ event_id: id, user_id: u }))));
+    },
+    async notify(id, users, kind) { const { data, error } = await sb.functions.invoke('notify', { body: { event_id: id, user_ids: users, kind } }); if (error) throw error; return data; },
+    async registerPush(endpoint, p256dh, auth) { ok(await sb.rpc('register_push', { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth })); },
+    async unregisterPush(endpoint) { ok(await sb.rpc('unregister_push', { p_endpoint: endpoint })); },
     async remove(id) { const d = ok(await sb.from('events').delete().eq('id', id).select('id')); if (!d.length) throw new Error('permission denied'); },
     async setApproved(id, v) { ok(await sb.from('profiles').update({ approved: v }).eq('id', id)); },
     async setAdmin(id, v) { ok(await sb.from('profiles').update({ is_admin: v }).eq('id', id)); },
@@ -230,17 +250,18 @@ function demoStore() {
   try { db = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { /* 저장소를 못 쓰는 환경 */ }
   if (!db) {
     const P = (id, name, title, approved = true, is_admin = false) => ({ id, name, title, approved, is_admin });
-    const E = (id, owner_id, type, title, a, b, memo = '') => ({ id, owner_id, type, title, start_date: addDays(mon, a), end_date: addDays(mon, b), memo });
+    const E = (id, owner_id, type, title, a, b, memo = '', members = []) => ({ id, owner_id, type, title, start_date: addDays(mon, a), end_date: addDays(mon, b), memo, members });
     db = {
       profiles: [P('me', '나(데모)', '수습', true, true), P('p2', '김회계', '매니저'), P('p3', '이감사', '시니어'), P('p4', '박결산', '시니어'), P('p5', '최신입', '수습', false)],
       events: [
-        E('e1', 'me', 'field', 'A사 중간감사', 0, 2, '현장 09:30 집합'), E('e2', 'p2', 'field', 'A사 중간감사', 0, 2), E('e3', 'p3', 'field', 'B사 내부회계 검토', 1, 4),
+        E('e1', 'p2', 'field', 'A사 중간감사', 0, 2, '현장 09:30 집합', ['me', 'p2', 'p4']), E('e3', 'p3', 'field', 'B사 내부회계 검토', 1, 4),
         E('e4', 'p4', 'leave', '연차', 3, 4), E('e5', 'me', 'leave', '교육', 4, 4, '집합교육'), E('e6', 'p2', 'deadline', 'C사 검토보고서 발행', 4, 4),
         E('e7', 'p2', 'dept', '부서 회의', 0, 0, '16:00 회의실'), E('e8', 'p3', 'field', 'D사 재고실사', 7, 8), E('e9', 'me', 'field', 'B사 중간감사', 7, 11),
-        E('e10', 'p4', 'field', 'E사 중간감사', 8, 11), E('e11', 'p2', 'dept', '부서 송년회', 10, 10), E('e12', 'me', 'deadline', 'A사 조서 정리 마감', 9, 9),
+        E('e10', 'me', 'field', 'E사 중간감사', 8, 11, '', ['p3', 'p4']), E('e11', 'p2', 'dept', '부서 송년회', 10, 10), E('e12', 'me', 'deadline', 'A사 조서 정리 마감', 9, 9),
       ],
     };
   }
+  db.events.forEach(e => { e.members = e.members || []; });
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 무시 */ } };
   const cp = x => JSON.parse(JSON.stringify(x));
   return {
@@ -248,12 +269,16 @@ function demoStore() {
     async signIn() {}, async signUp() { return true; }, async resetRequest() {}, async setPassword() {}, async signOut() { try { localStorage.removeItem(KEY); } catch (e) {} },
     async profiles() { return cp(db.profiles); },
     async events(from, to) { return cp(db.events.filter(e => e.start_date <= to && e.end_date >= from)); },
-    async myEvents(uid, from) { return cp(db.events.filter(e => e.owner_id === uid && e.end_date >= from).sort((a, b) => a.start_date < b.start_date ? -1 : 1)); },
+    async myEvents(uid, from) { return cp(db.events.filter(e => (e.members.length ? e.members : [e.owner_id]).includes(uid) && e.end_date >= from).sort((a, b) => a.start_date < b.start_date ? -1 : 1)); },
     async save(ev) {
-      if (ev.id) Object.assign(db.events.find(e => e.id === ev.id), ev);
-      else db.events.push({ ...ev, id: 'e' + Date.now() });
-      persist();
+      const { owner_id, ...rest } = ev;
+      if (ev.id) Object.assign(db.events.find(e => e.id === ev.id), rest);
+      else { ev = { ...ev, id: 'e' + Date.now(), members: [] }; db.events.push(ev); }
+      persist(); return ev.id;
     },
+    async setMembers(id, add, del) { const e = db.events.find(x => x.id === id); e.members = e.members.filter(u => !del.includes(u)).concat(add); persist(); },
+    async notify(id, users) { return { sent: 0, failed: 0, devices: 0, demo: users.length }; },
+    async registerPush() {}, async unregisterPush() {},
     async remove(id) { db.events = db.events.filter(e => e.id !== id); persist(); },
     async setApproved(id, v) { db.profiles.find(p => p.id === id).approved = v; persist(); },
     async setAdmin(id, v) { db.profiles.find(p => p.id === id).is_admin = v; persist(); },
@@ -271,10 +296,14 @@ const S = {
 const app = document.getElementById('app');
 const mount = (...kids) => app.replaceChildren(...kids.filter(k => k != null && k !== false));
 const nameOf = id => (S.pmap[id] && S.pmap[id].name) || '?';
-const visible = e => S.filter.has(e.type) && (!S.onlyMine || e.owner_id === S.user.id);
+const whoOf = e => (e.members && e.members.length) ? e.members : [e.owner_id];   // 배정이 있으면 배정된 사람들, 없으면 작성자
+const isMine = e => whoOf(e).includes(S.user.id);
+const names = (e, max = 3) => { const n = whoOf(e).map(nameOf).sort((a, b) => a.localeCompare(b, 'ko')); return n.length > max ? `${n.slice(0, max).join(', ')} 외 ${n.length - max}명` : n.join(', '); };
+const visible = e => S.filter.has(e.type) && (!S.onlyMine || isMine(e));
 const onDay = d => S.events.filter(e => e.start_date <= d && e.end_date >= d && visible(e))
   .sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type) || (a.start_date < b.start_date ? -1 : 1));
-const canEdit = e => e.owner_id === S.user.id;
+const canEdit = e => e.owner_id === S.user.id || (S.me.is_admin && e.members && e.members.length > 0);
+const canDelete = e => e.owner_id === S.user.id || S.me.is_admin;
 
 /* ---------- 시작 ---------- */
 async function boot() {
@@ -302,7 +331,7 @@ async function loadProfiles() {
 async function enter() {
   await loadProfiles();
   if (!S.me || !S.me.approved) return renderPending();
-  renderShell(); await refresh();
+  renderShell(); pushSync(); await refresh();
 }
 
 /* ---------- 앱 설치 안내 (브라우저로 열었을 때만 표시) ---------- */
@@ -323,6 +352,58 @@ function installBar() {
     h('div', {}, h('button', { class: 'btn sm', id: 'installBtn', style: deferredInstall ? '' : 'display:none', onclick: async () => { if (!deferredInstall) return; deferredInstall.prompt(); await deferredInstall.userChoice.catch(() => {}); deferredInstall = null; } }, '앱 설치')));
   const bar = h('div', { class: 'install', id: 'install' }, body,
     h('button', { class: 'x', 'aria-label': '안내 닫기', onclick: () => { try { localStorage.setItem('sched84-noinstall', '1'); } catch (e) { /* 무시 */ } bar.remove(); } }, '×'));
+  return bar;
+}
+
+/* ---------- 배정 알림(푸시) ---------- */
+const PUSH_OK = !DEMO && !!CFG.VAPID_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const b64uToBytes = v => { const b = atob(v.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(v.length / 4) * 4, '=')); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+const swReady = () => Promise.race([navigator.serviceWorker.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('앱 준비가 덜 되었습니다. 앱을 닫았다 다시 열어 주세요.')), 5000))]);
+const currentSub = async () => (await swReady()).pushManager.getSubscription();
+const savePush = sub => { const j = sub.toJSON(); return store.registerPush(j.endpoint, j.keys.p256dh, j.keys.auth); };
+async function pushState() {
+  if (DEMO) return 'unsupported';
+  if (!PUSH_OK) return IOS && !STANDALONE ? 'need-install' : 'unsupported';
+  if (Notification.permission === 'denied') return 'denied';
+  try { return Notification.permission === 'granted' && await currentSub() ? 'on' : 'off'; } catch (e) { return 'off'; }
+}
+async function pushEnable() {   // 반드시 버튼을 누른 직후에 호출 (아이폰은 사용자 동작 안에서만 권한 창이 뜸)
+  if ((await Notification.requestPermission()) !== 'granted') throw new Error('알림이 허용되지 않았습니다. 폰 설정에서 이 앱의 알림을 허용해 주세요.');
+  const reg = await swReady();
+  const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(CFG.VAPID_PUBLIC_KEY) });
+  await savePush(sub);
+}
+async function pushDisable() { const sub = await currentSub(); if (sub) { await store.unregisterPush(sub.endpoint).catch(() => {}); await sub.unsubscribe().catch(() => {}); } }
+async function pushSync() {     // 앱을 열 때마다: 이미 켜 둔 기기면 서버 등록을 최신으로 (기기 주소 변경·계정 변경 대비)
+  try { if (PUSH_OK && Notification.permission === 'granted') { const sub = await currentSub(); if (sub) await savePush(sub); } } catch (e) { /* 무시 */ }
+}
+async function pushLogout() { try { if (PUSH_OK) { const sub = await currentSub(); if (sub) await store.unregisterPush(sub.endpoint); } } catch (e) { /* 무시 */ } }
+const PUSH_TEXT = {
+  on: '이 기기에서 배정 알림을 받는 중입니다.',
+  off: '관리자가 일정을 배정하면 이 기기로 알림을 보내 드립니다.',
+  denied: '이 앱의 알림이 차단되어 있습니다. 폰 설정 → 알림에서 이 앱을 허용한 뒤 다시 시도해 주세요.',
+  'need-install': '아이폰은 홈 화면에 추가한 앱에서만 알림을 받을 수 있습니다. 홈 화면의 "84부 일정" 아이콘으로 열어 주세요.',
+  unsupported: '이 브라우저는 알림을 지원하지 않습니다.',
+};
+function pushCard() {           // 설정 화면의 알림 카드
+  const box = h('div', { class: 'card pad help' }, '확인 중…');
+  const draw = async () => {
+    const st = await pushState();
+    const act = (fn, done) => async ev => { ev.target.disabled = true; try { await fn(); toast(done); } catch (e) { toast(errText(e).replace(/^오류: (.*[가-힣].*)$/, '$1')); } draw(); const b = document.getElementById('pushbar'); if (b) b.remove(); };
+    box.replaceChildren(h('div', {}, PUSH_TEXT[st]),
+      st === 'off' ? h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: act(pushEnable, '알림을 켰습니다.') }, '알림 켜기')) : '',
+      st === 'on' ? h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: act(pushDisable, '알림을 껐습니다.') }, '알림 끄기')) : '');
+  };
+  draw(); return box;
+}
+function pushBar() {            // 아직 알림을 안 켠 사람에게 상단에 한 번 권유
+  try { if (localStorage.getItem('sched84-nopush') === '1') return null; } catch (e) { /* 무시 */ }
+  if (!PUSH_OK) return null;
+  const bar = h('div', { class: 'install', id: 'pushbar', style: 'display:none' },
+    h('div', {}, h('b', {}, '배정 알림: '), '일정이 배정되면 폰으로 알려 드립니다.',
+      h('div', {}, h('button', { class: 'btn sm', onclick: async ev => { ev.target.disabled = true; try { await pushEnable(); toast('알림을 켰습니다.'); bar.remove(); } catch (e) { toast(errText(e).replace(/^오류: (.*[가-힣].*)$/, '$1')); ev.target.disabled = false; } } }, '알림 켜기'))),
+    h('button', { class: 'x', 'aria-label': '안내 닫기', onclick: () => { try { localStorage.setItem('sched84-nopush', '1'); } catch (e) { /* 무시 */ } bar.remove(); } }, '×'));
+  pushState().then(st => { if (st === 'off') bar.style.display = ''; else bar.remove(); });
   return bar;
 }
 
@@ -392,7 +473,7 @@ function renderPending() {
       h('button', { class: 'btn', onclick: () => enter().catch(e => toast(errText(e))) }, '승인 확인'),
       h('button', { class: 'btn ghost', onclick: logout }, '로그아웃'))));
 }
-async function logout() { await store.signOut(); S.user = S.me = null; DEMO ? location.reload() : renderAuth('in'); }
+async function logout() { await pushLogout(); await store.signOut(); S.user = S.me = null; DEMO ? location.reload() : renderAuth('in'); }
 
 /* ---------- 기본 틀 ---------- */
 let elNav, elMain, elTabs, elFab;
@@ -401,7 +482,7 @@ function renderShell() {
   elTabs = h('div', {}); elFab = h('button', { class: 'fab', 'aria-label': '일정 추가', onclick: () => openForm({ start_date: S.view === 'cal' ? S.sel : today() }) }, '+');
   mount(
     h('header', {}, h('div', { class: 'hrow' }, h('h1', {}, DEPT + ' 일정표')), elNav),
-    installBar(),
+    installBar(), pushBar(),
     DEMO && h('div', { class: 'demo' }, '데모 모드 — 서버 연결 전 미리보기입니다. 입력 내용은 이 기기에만 저장됩니다.'),
     elMain, h('nav', { class: 'tabs' }, elTabs), elFab);
 }
@@ -448,12 +529,12 @@ function filterBar() {
     ORDER.map(t => h('button', { class: 'fchip' + (S.filter.has(t) ? ' on' : ''), onclick: () => { S.filter.has(t) ? S.filter.delete(t) : S.filter.add(t); redraw(); } },
       h('i', { style: 'background:' + colors[t] }), TYPES[t].label)));
 }
-const chipText = e => e.type === 'dept' ? e.title : `${nameOf(e.owner_id)} ${e.title}`;
+const chipText = e => { if (e.type === 'dept') return e.title; const p = whoOf(e); return `${nameOf(p.includes(S.user.id) ? S.user.id : p[0])}${p.length > 1 ? '+' + (p.length - 1) : ''} ${e.title}`; };
 function eventItem(e, showWho = true) {
   return h('button', { class: 'item', onclick: () => openDetail(e) },
     h('span', { class: 'bar t-' + e.type }),
     h('span', {}, h('div', { class: 'tt' }, e.title),
-      h('div', { class: 'ss' }, [showWho && nameOf(e.owner_id), TYPES[e.type].label, range(e.start_date, e.end_date)].filter(Boolean).join(' · '))));
+      h('div', { class: 'ss' }, [showWho && names(e), TYPES[e.type].label + (e.members && e.members.length ? ' · 배정' : ''), range(e.start_date, e.end_date)].filter(Boolean).join(' · '))));
 }
 
 /* ---------- 달력 ---------- */
@@ -481,7 +562,7 @@ function viewTeam() {
   const deptRow = h('tr', {}, h('td', { class: 'who' }, '부서 공통'), days.map(d => h('td', { class: d === t ? 'tod' : '' }, cellChips(onDay(d).filter(e => e.type === 'dept')))));
   const rowsEl = people.map(p => h('tr', {}, h('td', { class: 'who' }, p.name, p.title && h('small', {}, p.title)),
     days.map(d => { const mine = p.id === S.user.id; return h('td', { class: (d === t ? 'tod ' : '') + (mine ? 'mine' : ''), onclick: mine ? () => openForm({ start_date: d }) : null },
-      cellChips(onDay(d).filter(e => e.type !== 'dept' && e.owner_id === p.id))); })));
+      cellChips(onDay(d).filter(e => e.type !== 'dept' && whoOf(e).includes(p.id)))); })));
   elMain.replaceChildren(filterBar(), h('div', { class: 'card twrap' }, h('table', { class: 'team' }, h('thead', {}, head), h('tbody', {}, deptRow, rowsEl))),
     h('p', { class: 'help pad' }, '내 줄의 빈 칸을 누르면 그 날짜로 일정을 추가합니다. 표는 좌우로 밀어서 볼 수 있습니다.'));
 }
@@ -489,7 +570,7 @@ function viewTeam() {
 /* ---------- 내 일정 ---------- */
 function viewMine() {
   elMain.replaceChildren(h('h2', {}, '내 일정 (최근 1주 ~ 예정)'),
-    h('div', { class: 'card list' }, S.mine.length ? S.mine.map(e => eventItem(e, false)) : h('div', { class: 'empty' }, '등록한 일정이 없습니다. 오른쪽 아래 + 버튼으로 추가하세요.')));
+    h('div', { class: 'card list' }, S.mine.length ? S.mine.map(e => eventItem(e, false)) : h('div', { class: 'empty' }, '내 일정이 없습니다. 오른쪽 아래 + 버튼으로 추가하세요.')));
 }
 
 /* ---------- 설정 ---------- */
@@ -503,12 +584,13 @@ function viewSet() {
     S.me.is_admin && h('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
       p.approved && (p.id !== S.user.id || admins > 1) && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setAdmin(p.id, !p.is_admin)) }, p.is_admin ? '관리자 해제' : '관리자 지정'),
       p.id !== S.user.id && !p.is_admin && h('button', { class: 'btn sm' + (p.approved ? ' ghost' : ''), onclick: () => act(() => store.setApproved(p.id, !p.approved)) }, p.approved ? '승인 취소' : '승인'))));
-  elMain.replaceChildren(
+  elMain.replaceChildren(...[
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
     h('h2', {}, `구성원 (${S.profiles.length}명)`), h('div', { class: 'card list' }, members),
+    !DEMO && h('h2', {}, '배정 알림'), !DEMO && pushCard(),
     h('h2', {}, '폰 홈 화면에 앱으로 추가'), h('div', { class: 'card pad help' },
       h('div', {}, '아이폰: Safari로 접속 → 아래 공유 버튼 → "홈 화면에 추가"'), h('div', {}, '안드로이드: Chrome으로 접속 → 오른쪽 위 ⋮ 메뉴 → "홈 화면에 추가" 또는 "앱 설치"')),
-    h('div', { class: 'btns', style: 'margin:18px 2px' }, h('button', { class: 'btn ghost', onclick: logout }, DEMO ? '데모 데이터 초기화' : '로그아웃')));
+    h('div', { class: 'btns', style: 'margin:18px 2px' }, h('button', { class: 'btn ghost', onclick: logout }, DEMO ? '데모 데이터 초기화' : '로그아웃'))].filter(Boolean));
 }
 
 /* ---------- 아래에서 올라오는 창 ---------- */
@@ -525,13 +607,15 @@ function openDetail(e) {
     try { await store.remove(e.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (er) { toast(errText(er)); }
   } }, '삭제');
   sheet(h('h3', {}, h('span', { class: 'badge t-' + e.type, style: 'margin:0 8px 0 0' }, TYPES[e.type].label), e.title),
-    h('div', { class: 'kv' }, h('span', {}, '담당'), nameOf(e.owner_id)), h('div', { class: 'kv' }, h('span', {}, '기간'), range(e.start_date, e.end_date)),
+    h('div', { class: 'kv' }, h('span', {}, e.members.length ? '참여' : '담당'), names(e, 99)), e.members.length > 0 && h('div', { class: 'kv' }, h('span', {}, '배정'), nameOf(e.owner_id) + ' (관리자)'),
+    h('div', { class: 'kv' }, h('span', {}, '기간'), range(e.start_date, e.end_date)),
     e.memo && h('div', { class: 'memo' }, e.memo),
-    h('div', { class: 'btns' }, canEdit(e) && del, canEdit(e) && h('button', { class: 'btn', onclick: () => openForm(e) }, '수정'), h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기')),
-    !canEdit(e) && h('p', { class: 'help' }, '다른 사람의 일정은 보기만 할 수 있습니다.'));
+    h('div', { class: 'btns' }, canDelete(e) && del, canEdit(e) && h('button', { class: 'btn', onclick: () => openForm(e) }, '수정'), h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기')),
+    !canEdit(e) && h('p', { class: 'help' }, e.members.length ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.'));
 }
 function openForm(init) {
-  const ev = { type: 'field', title: '', memo: '', ...init }; ev.end_date = ev.end_date || ev.start_date;
+  const ev = { type: 'field', title: '', memo: '', members: [], ...init }; ev.end_date = ev.end_date || ev.start_date;
+  const before = { title: ev.title, start_date: ev.start_date, end_date: ev.end_date, members: new Set(ev.members) };
   const title = h('input', { type: 'text', maxlength: 60, value: ev.title });
   const s = h('input', { type: 'date', value: ev.start_date, onchange: () => { if (e.value < s.value) e.value = s.value; } }), e = h('input', { type: 'date', value: ev.end_date });
   const memo = h('textarea', { maxlength: 500, placeholder: '집합 시간, 장소 등 (선택)' }); memo.value = ev.memo || '';
@@ -542,6 +626,13 @@ function openForm(init) {
     quick.replaceChildren(...(TYPES[ev.type].quick || []).map(q => h('button', { type: 'button', onclick: () => { title.value = q; } }, q)));
   };
   drawType();
+  // 관리자 전용: 이 일정에 넣을 팀원 선택
+  const sel = new Set(ev.members), pick = h('div', { class: 'pick' });
+  const team = S.profiles.filter(p => p.approved).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  const drawPick = () => pick.replaceChildren(
+    ...team.map(p => h('button', { type: 'button', class: sel.has(p.id) ? 'on' : '', 'aria-pressed': sel.has(p.id) ? 'true' : 'false', onclick: () => { sel.has(p.id) ? sel.delete(p.id) : sel.add(p.id); drawPick(); } }, p.name)),
+    h('button', { type: 'button', class: 'all', onclick: () => { const all = sel.size === team.length; sel.clear(); if (!all) team.forEach(p => sel.add(p.id)); drawPick(); } }, sel.size === team.length ? '전체 해제' : '전체 선택'));
+  drawPick();
   const btn = h('button', { class: 'btn', type: 'submit' }, '저장');
   sheet(h('h3', {}, ev.id ? '일정 수정' : '일정 추가'), h('form', { onsubmit: async x => {
     x.preventDefault();
@@ -550,18 +641,32 @@ function openForm(init) {
     if (e.value < s.value) return toast('종료일이 시작일보다 빠릅니다.');
     btn.disabled = true;
     try {
-      await store.save({ id: ev.id, owner_id: S.user.id, type: ev.type, title: title.value.trim(), start_date: s.value, end_date: e.value, memo: memo.value.trim() });
+      const id = await store.save({ id: ev.id, owner_id: S.user.id, type: ev.type, title: title.value.trim(), start_date: s.value, end_date: e.value, memo: memo.value.trim() });
+      let jobs = [];
+      if (S.me.is_admin) {
+        const add = [...sel].filter(u => !before.members.has(u)), del = [...before.members].filter(u => !sel.has(u)), stay = [...sel].filter(u => before.members.has(u));
+        if (add.length || del.length) await store.setMembers(id, add, del);
+        const changed = ev.id && (before.title !== title.value.trim() || before.start_date !== s.value || before.end_date !== e.value);
+        if (add.length) jobs.push(store.notify(id, add, 'assign'));
+        if (changed && stay.length) jobs.push(store.notify(id, stay, 'update'));
+      }
       closeSheet(); toast('저장했습니다.'); if (S.view === 'cal') S.sel = s.value; refresh();
+      if (jobs.length) {   // 알림은 저장이 끝난 뒤 따로 보냄 (알림이 실패해도 일정은 저장된 상태)
+        const rs = await Promise.all(jobs.map(j => j.then(r => r || {}, () => null)));
+        if (rs.some(r => r === null)) toast('저장했습니다. 다만 알림 전송에는 실패했습니다.');
+        else if (!DEMO) { const sent = rs.reduce((n, r) => n + (r.sent || 0), 0); toast(sent ? `저장했습니다. 알림 ${sent}건을 보냈습니다.` : '저장했습니다. (알림을 켠 팀원 기기가 없어 알림은 가지 않았습니다)'); }
+      }
     } catch (er) { toast(errText(er)); btn.disabled = false; }
   } },
     h('label', {}, '유형'), seg, h('label', {}, '제목'), title, quick,
     h('div', { class: 'row2' }, h('div', {}, h('label', {}, '시작일'), s), h('div', {}, h('label', {}, '종료일'), e)),
     h('label', {}, '메모'), memo,
+    S.me.is_admin && h('label', {}, '팀원 배정 (관리자) — 선택한 팀원의 일정표에 이 일정이 들어갑니다'), S.me.is_admin && pick,
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), btn)));
 }
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.me && S.me.approved && !S.sheet && S.view !== 'set') refresh(); });
-if (!DEMO && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if (!DEMO && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 boot();
 })();
 </script>
