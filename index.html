@@ -148,7 +148,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.6';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.7';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -633,12 +633,19 @@ function viewSet() {
       p.id !== S.user.id && !p.is_admin && h('button', { class: 'btn sm' + (p.approved ? ' ghost' : ''), onclick: () => act(() => store.setApproved(p.id, !p.approved)) }, p.approved ? '승인 취소' : '승인'))));
   elMain.replaceChildren(...[
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
+    h('h2', {}, '일정 삭제'), delAskCard(),
     h('h2', {}, `구성원 (${S.profiles.length}명)`), h('div', { class: 'card list' }, members),
     S.me.is_admin && h('h2', {}, '일정 유형 관리 (관리자)'), S.me.is_admin && catCard(),
     !DEMO && h('h2', {}, '배정 알림'), !DEMO && pushCard(),
     h('h2', {}, '폰 홈 화면에 앱으로 추가'), h('div', { class: 'card pad help' },
       h('div', {}, '아이폰: Safari로 접속 → 아래 공유 버튼 → "홈 화면에 추가"'), h('div', {}, '안드로이드: Chrome으로 접속 → 오른쪽 위 ⋮ 메뉴 → "홈 화면에 추가" 또는 "앱 설치"')),
     h('div', { class: 'btns', style: 'margin:18px 2px' }, h('button', { class: 'btn ghost', onclick: logout }, DEMO ? '데모 데이터 초기화' : '로그아웃'))].filter(Boolean));
+}
+
+function delAskCard() {
+  const chk = h('input', { type: 'checkbox', id: 'askdel', onchange: () => { LS.set(SKIP_DEL, chk.checked ? '0' : '1'); toast(chk.checked ? '삭제 전에 확인 창을 띄웁니다.' : '확인 없이 바로 삭제합니다.'); } });
+  chk.checked = LS.get(SKIP_DEL) !== '1';
+  return h('div', { class: 'card pad' }, h('label', { class: 'chk', for: 'askdel', style: 'margin-top:0' }, chk, '일정을 삭제하기 전에 확인 창 띄우기'));
 }
 
 /* ---------- 일정 유형 관리 (관리자) ---------- */
@@ -672,10 +679,9 @@ function openCat(init) {
     if (!next.active && CATS.filter(x => x.active && x.id !== next.id).length === 0) return toast('사용 중인 유형이 최소 1개는 있어야 합니다.');
     try { await store.saveCategory(next); closeSheet(); toast('저장했습니다.'); refresh(); } catch (e) { toast(errText(e)); }
   };
-  let armed = false;
   const del = h('button', { class: 'btn danger', type: 'button', onclick: async () => {
-    if (!armed) { armed = true; del.textContent = '정말 삭제'; return; }
-    try { await store.deleteCategory(c.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (e) { toast(errText(e)); armed = false; del.textContent = '삭제'; }
+    if (!(await ask(`"${c.label}" 유형을 삭제하시겠습니까?`))) return;
+    try { await store.deleteCategory(c.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (e) { toast(errText(e)); }
   } }, '삭제');
   sheet(h('h3', {}, c.id ? '유형 수정' : '유형 추가'),
     h('form', { onsubmit: ev => { ev.preventDefault(); save({}); } },
@@ -684,6 +690,22 @@ function openCat(init) {
       h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), h('button', { class: 'btn', type: 'submit' }, '저장')),
       c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기')),
       c.id && h('p', { class: 'help' }, '이름·색을 바꾸면 이 유형의 기존 일정에도 바로 반영됩니다. 이미 일정에 쓰인 유형은 삭제 대신 숨기기만 됩니다.')));
+}
+
+/* ---------- 확인 창 (예/아니오) ---------- */
+const SKIP_DEL = 'sched84-noask-del';   // '1' 이면 일정 삭제 때 확인 창을 띄우지 않음
+function ask(msg, { sub = '', skipKey = null } = {}) {
+  if (skipKey && LS.get(skipKey) === '1') return Promise.resolve(true);
+  return new Promise(res => {
+    const chk = h('input', { type: 'checkbox', id: 'cfskip' });
+    const done = v => { if (v && skipKey && chk.checked) LS.set(skipKey, '1'); ov.remove(); res(v); };
+    const ov = h('div', { class: 'ov mid', id: 'cf', style: 'z-index:15', role: 'dialog', 'aria-modal': 'true', onclick: ev => { if (ev.target === ov) done(false); } },
+      h('div', { class: 'sheet', style: 'max-width:360px' },
+        h('h3', { style: 'margin-bottom:6px' }, msg), sub && h('p', { class: 'help', style: 'margin:0' }, sub),
+        skipKey && h('label', { class: 'chk', for: 'cfskip' }, chk, '다음부터 묻지 않고 바로 삭제'),
+        h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: () => done(false) }, '아니오'), h('button', { class: 'btn', onclick: () => done(true) }, '예'))));
+    document.body.append(ov);
+  });
 }
 
 /* ---------- 아래에서 올라오는 창 ---------- */
@@ -702,9 +724,9 @@ function openDay(d) {
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기'), h('button', { class: 'btn', onclick: () => openForm({ start_date: d }) }, '+ 일정 추가')));
 }
 function openDetail(e, back = null) {
-  let armed = false;
   const del = h('button', { class: 'btn danger', onclick: async () => {
-    if (!armed) { armed = true; del.textContent = '정말 삭제'; return; }
+    const n = e.members.length;
+    if (!(await ask('해당 일정을 삭제하시겠습니까?', { sub: n ? `배정된 팀원 ${n}명의 일정표에서도 함께 사라집니다.` : '', skipKey: SKIP_DEL }))) return;
     try { await store.remove(e.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (er) { toast(errText(er)); }
   } }, '삭제');
   sheet(h('h3', {}, e.title),
