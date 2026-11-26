@@ -87,6 +87,8 @@ table.team{border-collapse:collapse;width:100%;min-width:600px;table-layout:fixe
 .ov{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
 .sheet{background:var(--card);width:100%;max-width:760px;border-radius:16px 16px 0 0;padding:16px 16px calc(env(safe-area-inset-bottom) + 18px);max-height:92vh;overflow-y:auto}
 .sheet h3{margin:0 0 12px;font-size:17px}
+.ov.mid{align-items:center;padding:16px}
+.ov.mid .sheet{border-radius:16px;max-width:520px;max-height:82vh;padding-bottom:18px}
 label{display:block;font-size:12.5px;color:var(--sub);margin:12px 0 4px}
 input[type=text],input[type=email],input[type=password],input[type=date],textarea{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:9px;padding:10px 11px;font-size:16px;min-height:44px}
 textarea{min-height:72px;resize:vertical}
@@ -128,7 +130,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.2';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.3';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -531,8 +533,8 @@ function filterBar() {
       h('i', { style: 'background:' + colors[t] }), TYPES[t].label)));
 }
 const chipText = e => { if (e.type === 'dept') return e.title; const p = whoOf(e); return `${nameOf(p.includes(S.user.id) ? S.user.id : p[0])}${p.length > 1 ? '+' + (p.length - 1) : ''} ${e.title}`; };
-function eventItem(e, showWho = true) {
-  return h('button', { class: 'item', onclick: () => openDetail(e) },
+function eventItem(e, showWho = true, back = null) {
+  return h('button', { class: 'item', onclick: () => openDetail(e, back) },
     h('span', { class: 'bar t-' + e.type }),
     h('span', {}, h('div', { class: 'tt' }, e.title),
       h('div', { class: 'ss' }, [showWho && names(e), TYPES[e.type].label + (e.members && e.members.length ? ' · 배정' : ''), range(e.start_date, e.end_date)].filter(Boolean).join(' · '))));
@@ -544,7 +546,7 @@ function viewCal() {
   const grid = h('div', { class: 'grid card' }, DOW.map((d, i) => h('div', { class: 'dow' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') }, d)));
   for (let i = 0; i < rows * 7; i++) {
     const d = addDays(start, i), evs = onDay(d), dw = i % 7, max = 3;
-    grid.append(h('button', { class: 'cell' + (d.slice(0, 7) !== mon ? ' out' : '') + (d === t ? ' today' : '') + (d === S.sel ? ' sel' : ''), onclick: () => { S.sel = d; viewCal(); } },
+    grid.append(h('button', { class: 'cell' + (d.slice(0, 7) !== mon ? ' out' : '') + (d === t ? ' today' : '') + (d === S.sel ? ' sel' : ''), onclick: () => { S.sel = d; viewCal(); openDay(d); } },
       h('span', { class: 'num' + (dw === 0 ? ' sun' : dw === 6 ? ' sat' : '') }, parse(d).getDate()),
       evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip t-' + e.type }, chipText(e))),
       evs.length > max && h('span', { class: 'more' }, `+${evs.length - (max - 1)}`)));
@@ -595,13 +597,21 @@ function viewSet() {
 }
 
 /* ---------- 아래에서 올라오는 창 ---------- */
-function sheet(...kids) {
+const sheet = (...kids) => sheetAt('', ...kids);
+function sheetAt(cls, ...kids) {   // cls 'mid' = 화면 가운데에 띄움
   closeSheet(); S.sheet = true;
-  const ov = h('div', { class: 'ov', id: 'ov', onclick: e => { if (e.target === ov) closeSheet(); } }, h('div', { class: 'sheet' }, kids));
+  const ov = h('div', { class: 'ov ' + cls, id: 'ov', onclick: e => { if (e.target === ov) closeSheet(); } }, h('div', { class: 'sheet' }, kids));
   document.body.append(ov);
 }
 function closeSheet() { const o = document.getElementById('ov'); if (o) o.remove(); S.sheet = false; }
-function openDetail(e) {
+// 달력에서 날짜를 누르면: 그날 일정을 화면 가운데에 펼침
+function openDay(d) {
+  const evs = onDay(d), back = () => openDay(d);
+  sheetAt('mid', h('h3', {}, `${md(d)} 일정`),
+    h('div', { class: 'card list' }, evs.length ? evs.map(e => eventItem(e, true, back)) : h('div', { class: 'empty' }, '등록된 일정이 없습니다.')),
+    h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기'), h('button', { class: 'btn', onclick: () => openForm({ start_date: d }) }, '+ 일정 추가')));
+}
+function openDetail(e, back = null) {
   let armed = false;
   const del = h('button', { class: 'btn danger', onclick: async () => {
     if (!armed) { armed = true; del.textContent = '정말 삭제'; return; }
@@ -611,7 +621,7 @@ function openDetail(e) {
     h('div', { class: 'kv' }, h('span', {}, e.members.length ? '참여' : '담당'), names(e, 99)), e.members.length > 0 && h('div', { class: 'kv' }, h('span', {}, '배정'), nameOf(e.owner_id) + ' (관리자)'),
     h('div', { class: 'kv' }, h('span', {}, '기간'), range(e.start_date, e.end_date)),
     e.memo && h('div', { class: 'memo' }, e.memo),
-    h('div', { class: 'btns' }, canDelete(e) && del, canEdit(e) && h('button', { class: 'btn', onclick: () => openForm(e) }, '수정'), h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기')),
+    h('div', { class: 'btns' }, canDelete(e) && del, canEdit(e) && h('button', { class: 'btn', onclick: () => openForm(e) }, '수정'), h('button', { class: 'btn ghost', onclick: back || closeSheet }, back ? '목록으로' : '닫기')),
     !canEdit(e) && h('p', { class: 'help' }, e.members.length ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.'));
 }
 function openForm(init) {
