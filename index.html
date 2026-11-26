@@ -141,7 +141,10 @@ button.person{cursor:pointer}
 .seg button.on{border-color:transparent;font-weight:700}
 .quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .quick button{border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12.5px}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.row2>div{min-width:0}
+input[type=date]{min-width:0;max-width:100%;-webkit-appearance:none;appearance:none;display:block;text-align:left}
+input[type=date]::-webkit-date-and-time-value{text-align:left}
 .btns{display:flex;gap:8px;margin-top:18px}
 .btn{flex:1;border-radius:10px;padding:12px;font-weight:700;background:var(--brand);color:#fff;text-align:center}
 .btn.ghost{background:none;border:1px solid var(--line);color:var(--text);font-weight:500}
@@ -178,7 +181,7 @@ button.person{cursor:pointer}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.13';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.14';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -938,6 +941,7 @@ function openForm(init) {
   const kopts = CLIENTS.filter(c => c.active || c.id === ev.client_id);
   const ksel = h('select', { class: 'inp' }, h('option', { value: '' }, '선택 안 함'), kopts.map(c => h('option', { value: c.id }, c.name)));
   ksel.value = ev.client_id || '';
+  ksel.addEventListener('change', () => drawType());
   const title = h('input', { type: 'text', maxlength: 60, value: ev.title });
   const s = h('input', { type: 'date', value: ev.start_date, onchange: () => { if (e.value < s.value) e.value = s.value; } }), e = h('input', { type: 'date', value: ev.end_date });
   const memo = h('textarea', { maxlength: 500, placeholder: '집합 시간, 장소 등 (선택)' }); memo.value = ev.memo || '';
@@ -945,7 +949,7 @@ function openForm(init) {
   const drawType = () => {
     seg.replaceChildren(...CATS.filter(c => c.active || c.id === ev.type).map(c => h('button', { type: 'button', class: ev.type === c.id ? 'on fill c-' + c.color : '', onclick: () => { ev.type = c.id; drawType(); } }, c.label)));
     const hint = HINTS[ev.type] || {};
-    title.placeholder = hint.ph || '일정 제목';
+    title.placeholder = ksel.value ? '예: 기말감사, 재고실사, 내부회계' : (hint.ph || '일정 제목');
     quick.replaceChildren(...(hint.quick || []).map(q => h('button', { type: 'button', onclick: () => { title.value = q; } }, q)));
   };
   drawType();
@@ -1000,8 +1004,9 @@ function openForm(init) {
       }
     } catch (er) { toast(errText(er)); btn.disabled = false; }
   } },
-    h('label', {}, '유형'), seg, h('label', {}, '제목'), title, quick,
+    h('label', {}, '유형'), seg,
     CLIENTS.length > 0 && h('label', {}, '거래처 (선택)'), CLIENTS.length > 0 && ksel,
+    h('label', {}, '제목'), title, quick,
     h('div', { class: 'row2' }, h('div', {}, h('label', {}, '시작일'), s), h('div', {}, h('label', {}, '종료일'), e)),
     h('label', {}, '메모'), memo,
     S.me.is_admin && h('label', {}, '팀원 배정 (관리자) — 선택한 팀원의 일정표에 이 일정이 들어갑니다'), S.me.is_admin && pick, S.me.is_admin && rolesBox,
