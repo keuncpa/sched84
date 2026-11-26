@@ -181,7 +181,7 @@ input[type=date]::-webkit-date-and-time-value{text-align:left}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.14';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.15';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -704,12 +704,12 @@ function viewTeam() {
   const cellChips = list => list.map(e => chip(e, cli(e.client_id) ? chipKids(e) : e.title));
   let body, help;
   if (byClient) {
-    // 거래처별: 줄 = 거래처, 칸 = 그날 그 거래처에 배정된 사람들
+    // 거래처별: 줄 = 거래처, 칸 = 그날 그 거래처의 일정 제목 (누가 가는지는 칩을 누르면 상세에서 확인)
     const ks = CLIENTS.filter(c => c.active || S.events.some(e => e.client_id === c.id));
     body = ks.map(c => h('tr', {}, h('td', { class: 'who k', onclick: () => openClient(c.id) }, h('i', { class: 'dot c-' + c.color }), c.name),
-      days.map(d => h('td', { class: d === t ? 'tod' : '' }, onDay(d).filter(e => e.client_id === c.id).map(e => chip(e, cat(e.type).shared ? e.title : names(e, 2)))))));
+      days.map(d => h('td', { class: d === t ? 'tod' : '' }, onDay(d).filter(e => e.client_id === c.id).map(e => chip(e, e.title.replace(c.name, '').trim() || e.title))))));
     if (!ks.length) body = [h('tr', {}, h('td', { colspan: 8, class: 'empty' }, '등록된 거래처가 없습니다.'))];
-    help = '거래처 이름을 누르면 그 거래처의 전체 일정과 배정 인원을 볼 수 있습니다. 표는 좌우로 밀어서 볼 수 있습니다.';
+    help = '일정을 누르면 배정 인원을, 거래처 이름을 누르면 그 거래처의 전체 일정을 볼 수 있습니다. 표는 좌우로 밀어서 볼 수 있습니다.';
   } else {
     // 팀원별: 재직자 전원 + (퇴사자라도) 이 주에 일정이 있는 사람
     const busy = new Set(); S.events.forEach(e => { if (!cat(e.type).shared) whoOf(e).forEach(id => busy.add(id)); });
