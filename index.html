@@ -123,6 +123,12 @@ table.team{border-collapse:collapse;width:100%;min-width:600px;table-layout:fixe
 label{display:block;font-size:12.5px;color:var(--sub);margin:12px 0 4px}
 input[type=text],input[type=email],input[type=password],input[type=date],textarea{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:9px;padding:10px 11px;font-size:16px;min-height:44px}
 textarea{min-height:72px;resize:vertical}
+select.inp{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:9px;padding:10px 11px;font-size:16px;min-height:44px;color:var(--text)}
+.fsel{flex:none;border:1px solid var(--text);background:var(--card);border-radius:999px;padding:5px 8px;font-size:13px;color:var(--text);max-width:140px;font-weight:600}
+.mode{display:flex;gap:6px;margin:0 2px 10px}.mode button{flex:1;border:1px solid var(--line);background:var(--card);border-radius:9px;padding:8px;font-size:13.5px;color:var(--sub)}
+.mode button.on{border-color:var(--text);color:var(--text);font-weight:700}
+.team .who.k{cursor:pointer;word-break:break-all;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
+button.person{cursor:pointer}
 .seg{display:flex;flex-wrap:wrap;gap:6px}
 .seg button{flex:1 0 22%;border:1px solid var(--line);border-radius:9px;padding:9px 6px;font-size:13px;white-space:nowrap}
 .seg button.on{border-color:transparent;font-weight:700}
@@ -161,7 +167,7 @@ textarea{min-height:72px;resize:vertical}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.9';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.10';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -197,6 +203,13 @@ function setCats(rows) {
 setCats(DEFAULT_CATS);
 const cat = id => CMAP[id] || { id, label: '기타', color: 'gray', shared: false, active: false, sort: 999 };
 const cc = id => 'fill c-' + cat(id).color;
+// 거래처: 관리자가 [설정]에서 등록. 일정마다 하나를 지정할 수 있음(선택).
+let CLIENTS = [], KMAP = {};
+function setClients(rows) {
+  CLIENTS = [...(Array.isArray(rows) ? rows : [])].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  KMAP = Object.fromEntries(CLIENTS.map(c => [c.id, c]));
+}
+const cli = id => (id && KMAP[id]) || null;
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
@@ -224,7 +237,8 @@ function errText(e) {
   if (/different from the old password/i.test(m)) return '이전과 다른 비밀번호를 입력해 주세요.';
   if (/not authorized/i.test(m)) return '메일 발송 설정이 아직 완료되지 않았습니다. 관리자에게 문의해 주세요.';
   if (/rate limit|security purposes/i.test(m)) return '요청이 너무 잦습니다. 1~2분 뒤 다시 시도해 주세요.';
-  if (/foreign key constraint/i.test(m)) return '이 유형을 쓰는 일정이 있어 삭제할 수 없습니다. 대신 "숨기기"를 사용해 주세요.';
+  if (/foreign key constraint/i.test(m)) return '이미 일정에 쓰이고 있어 삭제할 수 없습니다. 대신 "숨기기"를 사용해 주세요.';
+  if (/duplicate key/i.test(m)) return '같은 이름이 이미 등록되어 있습니다.';
   if (/row-level security|permission denied/i.test(m)) return '권한이 없습니다. (본인 일정만 수정할 수 있습니다)';
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return '네트워크 연결을 확인해 주세요.';
   return '오류: ' + m;
@@ -250,7 +264,7 @@ const authStorage = {
 /* ---------- 저장소: 실제 서버(Supabase) ---------- */
 function supaStore(sb) {
   const ok = ({ data, error }) => { if (error) throw error; return data; };
-  const cols = 'id,owner_id,type,title,start_date,end_date,memo,event_members(user_id)';
+  const cols = 'id,owner_id,type,title,start_date,end_date,memo,client_id,event_members(user_id)';
   const norm = rows => rows.map(({ event_members, ...e }) => ({ ...e, members: (event_members || []).map(m => m.user_id) }));
   return {
     async session() { const { data } = await sb.auth.getSession(); return data.session ? data.session.user : null; },
@@ -259,7 +273,17 @@ function supaStore(sb) {
     async signOut() { await sb.auth.signOut(); },
     async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname.replace(/index\.html$/, '') })); },
     async setPassword(pw) { ok(await sb.auth.updateUser({ password: pw })); },
-    async profiles() { return ok(await sb.from('profiles').select('id,name,title,approved,is_admin').order('name')); },
+    async profiles() { return ok(await sb.from('profiles').select('id,name,title,approved,is_admin,left_at').order('name')); },
+    async clients() { return ok(await sb.from('clients').select('id,name,color,active').order('name')); },
+    async saveClient(c) {
+      const row = { name: c.name, color: c.color, active: c.active };
+      const d = c.id ? ok(await sb.from('clients').update(row).eq('id', c.id).select('id')) : ok(await sb.from('clients').insert(row).select('id'));
+      if (!d || !d.length) throw new Error('permission denied');
+    },
+    async deleteClient(id) { const d = ok(await sb.from('clients').delete().eq('id', id).select('id')); if (!d.length) throw new Error('permission denied'); },
+    async clientEvents(id) { return norm(ok(await sb.from('events').select(cols).eq('client_id', id).order('start_date', { ascending: false }).limit(300))); },
+    // 퇴사 처리: 접근만 막고(승인 해제) 그 사람의 일정·배정 기록은 그대로 둠 / 복귀: 다시 승인
+    async setLeft(id, left) { ok(await sb.from('profiles').update(left ? { approved: false, is_admin: false, left_at: new Date().toISOString() } : { approved: true, left_at: null }).eq('id', id)); },
     async categories() { return ok(await sb.from('categories').select('id,label,color,shared,active,sort').order('sort')); },
     async saveCategory(c) {
       const row = { label: c.label, color: c.color, shared: c.shared, active: c.active, sort: c.sort };
@@ -277,7 +301,7 @@ function supaStore(sb) {
       return [...all.values()].filter(e => (e.members.length ? e.members : [e.owner_id]).includes(uid)).sort((a, b) => a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : 0);
     },
     async save(ev) {
-      const row = { type: ev.type, title: ev.title, start_date: ev.start_date, end_date: ev.end_date, memo: ev.memo };
+      const row = { type: ev.type, title: ev.title, start_date: ev.start_date, end_date: ev.end_date, memo: ev.memo, client_id: ev.client_id || null };
       const data = ev.id ? ok(await sb.from('events').update(row).eq('id', ev.id).select('id'))
                          : ok(await sb.from('events').insert({ ...row, owner_id: ev.owner_id }).select('id'));
       if (!data || !data.length) throw new Error('permission denied');
@@ -315,7 +339,10 @@ function demoStore() {
         E('e10', 'me', 'field', 'E사 중간감사', 8, 11, '', ['p3', 'p4']), E('e11', 'p2', 'dept', '부서 송년회', 10, 10), E('e12', 'me', 'deadline', 'A사 조서 정리 마감', 9, 9),
       ],
     };
+    db.clients = [{ id: 'k1', name: 'A사', color: 'blue', active: true }, { id: 'k2', name: 'B사', color: 'green', active: true }, { id: 'k3', name: 'D사', color: 'orange', active: true }, { id: 'k4', name: 'E사', color: 'teal', active: true }];
+    db.events.forEach(e => { const k = db.clients.find(c => e.title.startsWith(c.name)); if (k) e.client_id = k.id; });
   }
+  db.clients = db.clients || [];
   db.events.forEach(e => { e.members = e.members || []; });
   db.categories = db.categories || JSON.parse(JSON.stringify(DEFAULT_CATS));
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 무시 */ } };
@@ -324,6 +351,14 @@ function demoStore() {
     async session() { return { id: 'me' }; },
     async signIn() {}, async signUp() { return true; }, async resetRequest() {}, async setPassword() {}, async signOut() { try { localStorage.removeItem(KEY); } catch (e) {} },
     async profiles() { return cp(db.profiles); },
+    async clients() { return cp(db.clients); },
+    async saveClient(c) {
+      if (db.clients.some(x => x.id !== c.id && x.name.toLowerCase() === c.name.toLowerCase())) throw new Error('duplicate key');
+      if (c.id) Object.assign(db.clients.find(x => x.id === c.id), c); else db.clients.push({ ...c, id: 'k' + Date.now() }); persist();
+    },
+    async deleteClient(id) { if (db.events.some(e => e.client_id === id)) throw new Error('violates foreign key constraint'); db.clients = db.clients.filter(c => c.id !== id); persist(); },
+    async clientEvents(id) { return cp(db.events.filter(e => e.client_id === id).sort((a, b) => a.start_date < b.start_date ? 1 : -1)); },
+    async setLeft(id, left) { const q = db.profiles.find(x => x.id === id); if (left) Object.assign(q, { approved: false, is_admin: false, left_at: new Date().toISOString() }); else Object.assign(q, { approved: true, left_at: null }); persist(); },
     async categories() { return cp(db.categories); },
     async saveCategory(c) { if (c.id) Object.assign(db.categories.find(x => x.id === c.id), c); else db.categories.push({ ...c, id: 'c' + Date.now() }); persist(); },
     async deleteCategory(id) { if (db.events.some(e => e.type === id)) throw new Error('violates foreign key constraint'); db.categories = db.categories.filter(c => c.id !== id); persist(); },
@@ -351,14 +386,18 @@ const S = {
   user: null, me: null, profiles: [], pmap: {}, events: [], mine: [],
   view: 'cal', month: today().slice(0, 8) + '01', week: mondayOf(today()), sel: today(),
   hide: new Set(), onlyMine: false, sheet: false,
+  client: '', teamBy: 'people', colorBy: 'type',   // 거래처 필터 / 팀 보기 기준 / 칩 색 기준(유형·거래처)
 };
+if (LS.get('sched84-colorby') === 'client') S.colorBy = 'client';
 const app = document.getElementById('app');
 const mount = (...kids) => app.replaceChildren(...kids.filter(k => k != null && k !== false));
 const nameOf = id => (S.pmap[id] && S.pmap[id].name) || '?';
 const whoOf = e => (e.members && e.members.length) ? e.members : [e.owner_id];   // 배정이 있으면 배정된 사람들, 없으면 작성자
 const isMine = e => whoOf(e).includes(S.user.id);
 const names = (e, max = 3) => { const n = whoOf(e).map(nameOf).sort((a, b) => a.localeCompare(b, 'ko')); return n.length > max ? `${n.slice(0, max).join(', ')} 외 ${n.length - max}명` : n.join(', '); };
-const visible = e => !S.hide.has(e.type) && (!S.onlyMine || isMine(e));
+const visible = e => !S.hide.has(e.type) && (!S.onlyMine || isMine(e)) && (!S.client || e.client_id === S.client);
+// 칩·막대 색: 기본은 유형 색, '색: 거래처'로 바꾸면 거래처 색(거래처 없는 일정은 회색)
+const ec = e => { if (S.colorBy !== 'client') return cc(e.type); const k = cli(e.client_id); return 'fill c-' + (k ? k.color : 'gray'); };
 const onDay = d => S.events.filter(e => e.start_date <= d && e.end_date >= d && visible(e))
   .sort((a, b) => (cat(b.type).shared - cat(a.type).shared) || (cat(a.type).sort - cat(b.type).sort) || (a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : 0));
 const canEdit = e => e.owner_id === S.user.id || (S.me.is_admin && e.members && e.members.length > 0);
@@ -384,6 +423,8 @@ async function boot() {
 }
 async function loadProfiles() {
   try { setCats(await store.categories()); } catch (e) { setCats(DEFAULT_CATS); }   // 유형 목록을 못 읽어도 기본 4개로 동작
+  try { setClients(await store.clients()); } catch (e) { setClients([]); }
+  if (S.client && !cli(S.client)) S.client = '';
   S.profiles = await store.profiles();
   S.pmap = Object.fromEntries(S.profiles.map(p => [p.id, p]));
   S.me = S.pmap[S.user.id] || null;
@@ -527,6 +568,9 @@ function renderNewPassword() {
     } }, h('label', {}, '새 비밀번호'), p1, h('label', {}, '새 비밀번호 확인'), p2, h('div', { class: 'btns' }, btn))));
 }
 function renderPending() {
+  if (S.me && S.me.left_at) return mount(h('div', { class: 'auth' },
+    h('h1', {}, '이용이 종료된 계정'), h('p', {}, '퇴사 처리된 계정이라 일정표를 볼 수 없습니다. 다시 이용해야 하면 관리자에게 문의해 주세요.'),
+    h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: logout }, '로그아웃'))));
   mount(h('div', { class: 'auth' },
     h('h1', {}, '승인 대기 중'), h('p', {}, '가입 신청이 접수되었습니다. 관리자가 승인하면 일정표를 볼 수 있습니다.'),
     h('div', { class: 'btns' },
@@ -583,7 +627,12 @@ function monthSpan() {
 }
 function filterBar() {
   const redraw = () => ({ cal: viewCal, team: viewTeam })[S.view]();
+  const ks = CLIENTS.filter(c => c.active || c.id === S.client || S.events.some(e => e.client_id === c.id));
+  const ksel = h('select', { class: 'fsel', 'aria-label': '거래처 선택', onchange: () => { S.client = ksel.value; redraw(); } }, h('option', { value: '' }, '전체 거래처'), ks.map(c => h('option', { value: c.id }, c.name)));
+  ksel.value = S.client;
   return h('div', { class: 'filters' },
+    CLIENTS.length > 0 && ksel,
+    CLIENTS.length > 0 && h('button', { class: 'fchip on', onclick: () => { S.colorBy = S.colorBy === 'client' ? 'type' : 'client'; LS.set('sched84-colorby', S.colorBy); redraw(); } }, S.colorBy === 'client' ? '색: 거래처' : '색: 유형'),
     h('button', { class: 'fchip' + (S.onlyMine ? ' on' : ''), onclick: () => { S.onlyMine = !S.onlyMine; redraw(); } }, '내 일정만'),
     CATS.filter(c => c.active || S.events.some(e => e.type === c.id)).map(c => h('button', { class: 'fchip' + (S.hide.has(c.id) ? '' : ' on'), onclick: () => { S.hide.has(c.id) ? S.hide.delete(c.id) : S.hide.add(c.id); redraw(); } },
       h('i', { class: 'c-' + c.color }), c.label)));
@@ -591,9 +640,9 @@ function filterBar() {
 const chipText = e => { if (cat(e.type).shared) return e.title; const p = whoOf(e); return `${nameOf(p.includes(S.user.id) ? S.user.id : p[0])}${p.length > 1 ? '+' + (p.length - 1) : ''} ${e.title}`; };
 function eventItem(e, showWho = true, back = null) {
   return h('button', { class: 'item', onclick: () => openDetail(e, back) },
-    h('span', { class: 'bar ' + cc(e.type) }),
+    h('span', { class: 'bar ' + ec(e) }),
     h('span', { style: 'min-width:0' }, h('div', { class: 'tt' }, e.title),
-      h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), e.members && e.members.length > 0 && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
+      h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), cli(e.client_id) && h('span', { class: 'badge fill c-' + cli(e.client_id).color }, cli(e.client_id).name), e.members && e.members.length > 0 && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
       h('div', { class: 'ss' }, [showWho && names(e), range(e.start_date, e.end_date)].filter(Boolean).join(' · '))));
 }
 
@@ -605,7 +654,7 @@ function viewCal() {
     const d = addDays(start, i), evs = onDay(d), dw = i % 7, max = 3;
     grid.append(h('button', { class: 'cell' + (d.slice(0, 7) !== mon ? ' out' : '') + (d === t ? ' today' : '') + (d === S.sel ? ' sel' : ''), onclick: () => { S.sel = d; viewCal(); openDay(d); } },
       h('span', { class: 'numrow' }, h('span', { class: 'num' + (dw === 0 ? ' sun' : dw === 6 ? ' sat' : '') }, parse(d).getDate()), d === t && h('span', { class: 'todaytag' }, '오늘')),
-      evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip ' + cc(e.type) }, chipText(e))),
+      evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip ' + ec(e) }, chipText(e))),
       evs.length > max && h('span', { class: 'more' }, `+${evs.length - (max - 1)}`)));
   }
   const evs = onDay(S.sel);
@@ -616,15 +665,55 @@ function viewCal() {
 /* ---------- 팀 보기(주간) ---------- */
 function viewTeam() {
   const days = Array.from({ length: 7 }, (_, i) => addDays(S.week, i)), t = today();
-  const people = S.profiles.filter(p => p.approved).sort((a, b) => (b.id === S.user.id) - (a.id === S.user.id) || a.name.localeCompare(b.name, 'ko'));
-  const cellChips = list => list.map(e => h('button', { class: 'chip ' + cc(e.type), onclick: ev => { ev.stopPropagation(); openDetail(e); } }, e.title));
+  const byClient = S.teamBy === 'client' && CLIENTS.length > 0;
   const head = h('tr', {}, h('th', { class: 'who' }, ''), days.map(d => { const w = parse(d).getDay(); return h('th', { class: (d === t ? 'tod ' : '') + (w === 0 ? 'sun' : w === 6 ? 'sat' : '') }, `${DOW[w]} ${parse(d).getDate()}`); }));
-  const deptRow = h('tr', {}, h('td', { class: 'who' }, '부서 공통'), days.map(d => h('td', { class: d === t ? 'tod' : '' }, cellChips(onDay(d).filter(e => cat(e.type).shared)))));
-  const rowsEl = people.map(p => h('tr', {}, h('td', { class: 'who' }, p.name, p.title && h('small', {}, p.title)),
-    days.map(d => { const mine = p.id === S.user.id; return h('td', { class: (d === t ? 'tod ' : '') + (mine ? 'mine' : ''), onclick: mine ? () => openForm({ start_date: d }) : null },
-      cellChips(onDay(d).filter(e => !cat(e.type).shared && whoOf(e).includes(p.id)))); })));
-  elMain.replaceChildren(filterBar(), h('div', { class: 'card twrap' }, h('table', { class: 'team' }, h('thead', {}, head), h('tbody', {}, deptRow, rowsEl))),
-    h('p', { class: 'help pad' }, '내 줄의 빈 칸을 누르면 그 날짜로 일정을 추가합니다. 표는 좌우로 밀어서 볼 수 있습니다.'));
+  const chip = (e, text) => h('button', { class: 'chip ' + ec(e), onclick: ev => { ev.stopPropagation(); openDetail(e); } }, text);
+  const cellChips = list => list.map(e => chip(e, e.title));
+  let body, help;
+  if (byClient) {
+    // 거래처별: 줄 = 거래처, 칸 = 그날 그 거래처에 배정된 사람들
+    const ks = CLIENTS.filter(c => c.active || S.events.some(e => e.client_id === c.id));
+    body = ks.map(c => h('tr', {}, h('td', { class: 'who k', onclick: () => openClient(c.id) }, h('i', { class: 'dot c-' + c.color }), c.name),
+      days.map(d => h('td', { class: d === t ? 'tod' : '' }, onDay(d).filter(e => e.client_id === c.id).map(e => chip(e, cat(e.type).shared ? e.title : names(e, 2)))))));
+    if (!ks.length) body = [h('tr', {}, h('td', { colspan: 8, class: 'empty' }, '등록된 거래처가 없습니다.'))];
+    help = '거래처 이름을 누르면 그 거래처의 전체 일정과 배정 인원을 볼 수 있습니다. 표는 좌우로 밀어서 볼 수 있습니다.';
+  } else {
+    // 팀원별: 재직자 전원 + (퇴사자라도) 이 주에 일정이 있는 사람
+    const busy = new Set(); S.events.forEach(e => { if (!cat(e.type).shared) whoOf(e).forEach(id => busy.add(id)); });
+    const people = S.profiles.filter(p => p.approved || busy.has(p.id)).sort((a, b) => (b.id === S.user.id) - (a.id === S.user.id) || (b.approved - a.approved) || a.name.localeCompare(b.name, 'ko'));
+    const deptRow = h('tr', {}, h('td', { class: 'who' }, '부서 공통'), days.map(d => h('td', { class: d === t ? 'tod' : '' }, cellChips(onDay(d).filter(e => cat(e.type).shared)))));
+    body = [deptRow, ...people.map(p => h('tr', {}, h('td', { class: 'who' }, p.name, (p.title || !p.approved) && h('small', {}, p.approved ? p.title : (p.left_at ? '퇴사' : '미승인'))),
+      days.map(d => { const mine = p.id === S.user.id; return h('td', { class: (d === t ? 'tod ' : '') + (mine ? 'mine' : ''), onclick: mine ? () => openForm({ start_date: d }) : null },
+        cellChips(onDay(d).filter(e => !cat(e.type).shared && whoOf(e).includes(p.id)))); })))];
+    help = '내 줄의 빈 칸을 누르면 그 날짜로 일정을 추가합니다. 표는 좌우로 밀어서 볼 수 있습니다.';
+  }
+  const mode = CLIENTS.length > 0 && h('div', { class: 'mode' },
+    h('button', { class: byClient ? '' : 'on', onclick: () => { S.teamBy = 'people'; viewTeam(); } }, '팀원별'),
+    h('button', { class: byClient ? 'on' : '', onclick: () => { S.teamBy = 'client'; viewTeam(); } }, '거래처별'));
+  elMain.replaceChildren(...[filterBar(), mode, h('div', { class: 'card twrap' }, h('table', { class: 'team' }, h('thead', {}, head), h('tbody', {}, body))),
+    h('p', { class: 'help pad' }, help)].filter(Boolean));
+}
+
+/* ---------- 거래처 상세: 그 거래처의 일정과 배정 인원 ---------- */
+async function openClient(id, back = null) {
+  const k = cli(id); if (!k) return;
+  let evs;
+  try { evs = await store.clientEvents(id); } catch (e) { return toast(errText(e)); }
+  const t = today(), again = () => openClient(id, back);
+  const up = evs.filter(e => e.end_date >= t).sort((a, b) => a.start_date < b.start_date ? -1 : 1), past = evs.filter(e => e.end_date < t);
+  const ids = new Set(); up.forEach(e => { if (!cat(e.type).shared) whoOf(e).forEach(u => ids.add(u)); });
+  const ppl = [...ids].map(u => S.pmap[u] || { name: '?', title: '' }).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  const list = arr => h('div', { class: 'card list', style: 'margin-top:4px' }, arr.map(e => eventItem(e, true, again)));
+  sheetAt('full',
+    h('div', { class: 'dtop' }, h('button', { class: 'btn ghost sm', onclick: back || closeSheet }, back ? '‹ 뒤로' : '‹ 닫기')),
+    h('div', { class: 'dbody' },
+      h('div', { class: 'tags' }, h('span', { class: 'badge fill c-' + k.color }, '거래처'), !k.active && h('span', { class: 'badge t-deadline' }, '숨김')),
+      h('h2', { class: 'dtitle' }, k.name),
+      h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, `예정·진행 중인 일정의 배정 인원 ${ppl.length}명`),
+        ppl.length ? h('div', { class: 'dwho' }, ppl.map(q => h('span', { class: 'person' }, q.name, q.title && h('small', {}, q.title)))) : h('div', { class: 'ss' }, '배정된 인원이 없습니다.')),
+      h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, `예정·진행 중 일정 ${up.length}건`), up.length ? list(up) : h('div', { class: 'ss' }, '예정된 일정이 없습니다.')),
+      h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, `지난 일정 ${past.length}건` + (past.length > 30 ? ' (최근 30건 표시)' : '')), past.length ? list(past.slice(0, 30)) : h('div', { class: 'ss' }, '지난 일정이 없습니다.'))),
+    h('div', { class: 'btns dfoot' }, h('button', { class: 'btn', onclick: () => openForm({ start_date: today(), client_id: id }) }, '+ 이 거래처 일정 추가')));
 }
 
 /* ---------- 내 일정 ---------- */
@@ -639,15 +728,27 @@ function viewSet() {
   const save = async () => { if (!name.value.trim()) return toast('이름을 입력해 주세요.'); try { await store.saveProfile(S.user.id, { name: name.value.trim(), title: title.value.trim() }); toast('저장했습니다.'); refresh(); } catch (e) { toast(errText(e)); } };
   const admins = S.profiles.filter(p => p.is_admin && p.approved).length;
   const act = async fn => { try { await fn(); await refresh(); } catch (e) { toast(errText(e)); } };
-  const members = [...S.profiles].sort((a, b) => a.approved - b.approved || a.name.localeCompare(b.name, 'ko')).map(p => h('div', { class: 'item' },
-    h('span', { style: 'flex:1' }, h('div', { class: 'tt' }, p.name, p.is_admin && h('span', { class: 'badge t-field' }, '관리자'), !p.approved && h('span', { class: 'badge t-deadline' }, '승인 대기')), h('div', { class: 'ss' }, p.title || '')),
+  const leave = p => async () => {
+    if (!(await ask(`${p.name} 님을 퇴사 처리하시겠습니까?`, { sub: '이 계정으로는 더 이상 일정표를 볼 수 없게 됩니다. 이 사람이 등록했거나 배정됐던 일정은 지워지지 않고 그대로 남습니다.' }))) return;
+    act(() => store.setLeft(p.id, true));
+  };
+  const row = p => h('div', { class: 'item' },
+    h('span', { style: 'flex:1' }, h('div', { class: 'tt' }, p.name, p.is_admin && h('span', { class: 'badge t-field' }, '관리자'), p.left_at ? h('span', { class: 'badge fill c-gray' }, '퇴사') : !p.approved && h('span', { class: 'badge t-deadline' }, '승인 대기')), h('div', { class: 'ss' }, p.title || '')),
     S.me.is_admin && h('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
       p.approved && (p.id !== S.user.id || admins > 1) && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setAdmin(p.id, !p.is_admin)) }, p.is_admin ? '관리자 해제' : '관리자 지정'),
-      p.id !== S.user.id && !p.is_admin && h('button', { class: 'btn sm' + (p.approved ? ' ghost' : ''), onclick: () => act(() => store.setApproved(p.id, !p.approved)) }, p.approved ? '승인 취소' : '승인'))));
+      p.approved && p.id !== S.user.id && h('button', { class: 'btn sm ghost', onclick: leave(p) }, '퇴사 처리'),
+      !p.approved && !p.left_at && h('button', { class: 'btn sm', onclick: () => act(() => store.setApproved(p.id, true)) }, '승인'),
+      p.left_at && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setLeft(p.id, false)) }, '복귀')));
+  const byName = (a, b) => a.approved - b.approved || a.name.localeCompare(b.name, 'ko');
+  const actives = S.profiles.filter(p => !p.left_at).sort(byName), lefts = S.profiles.filter(p => p.left_at).sort(byName);
+  const members = actives.map(row);
   elMain.replaceChildren(...[
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
     h('h2', {}, '일정 삭제'), delAskCard(),
-    h('h2', {}, `구성원 (${S.profiles.length}명)`), h('div', { class: 'card list' }, members),
+    h('h2', {}, `구성원 (${actives.length}명)`), h('div', { class: 'card list' }, members),
+    lefts.length > 0 && h('h2', {}, `퇴사자 (${lefts.length}명)`), lefts.length > 0 && h('div', { class: 'card list' }, lefts.map(row)),
+    lefts.length > 0 && h('p', { class: 'help pad', style: 'padding-top:6px' }, '퇴사자가 등록했거나 배정됐던 일정은 지워지지 않고 그대로 남아 있습니다.'),
+    S.me.is_admin && h('h2', {}, `거래처 관리 (관리자) · ${CLIENTS.length}곳`), S.me.is_admin && clientCard(),
     S.me.is_admin && h('h2', {}, '일정 유형 관리 (관리자)'), S.me.is_admin && catCard(),
     !DEMO && h('h2', {}, '배정 알림'), !DEMO && pushCard(),
     h('h2', {}, '폰 홈 화면에 앱으로 추가'), h('div', { class: 'card pad help' },
@@ -660,6 +761,37 @@ function delAskCard() {
   const chk = h('input', { type: 'checkbox', id: 'askdel', onchange: () => { LS.set(SKIP_DEL, chk.checked ? '0' : '1'); toast(chk.checked ? '삭제 전에 확인 창을 띄웁니다.' : '확인 없이 바로 삭제합니다.'); } });
   chk.checked = LS.get(SKIP_DEL) !== '1';
   return h('div', { class: 'card pad' }, h('label', { class: 'chk', for: 'askdel', style: 'margin-top:0' }, chk, '일정을 삭제하기 전에 확인 창 띄우기'));
+}
+
+/* ---------- 거래처 관리 (관리자) ---------- */
+function clientCard() {
+  return h('div', { class: 'card list' },
+    CLIENTS.map(c => h('button', { class: 'item', onclick: () => openClientEdit(c) },
+      h('span', { style: 'flex:1;min-width:0' }, h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.name, !c.active && h('span', { class: 'badge t-deadline' }, '숨김')), h('div', { class: 'ss' }, '눌러서 이름·색 수정')))),
+    !CLIENTS.length && h('div', { class: 'empty' }, '등록된 거래처가 없습니다. 거래처를 등록하면 일정마다 거래처를 지정하고 거래처별로 모아 볼 수 있습니다.'),
+    h('div', { class: 'pad' }, h('button', { class: 'btn ghost', style: 'width:100%', onclick: () => openClientEdit({ name: '', color: COLORS[CLIENTS.length % COLORS.length], active: true }) }, '+ 거래처 추가')));
+}
+function openClientEdit(init) {
+  const c = { ...init };
+  const name = h('input', { type: 'text', maxlength: 30, value: c.name, placeholder: '거래처 이름 (30자 이내)' });
+  const sw = h('div', { class: 'sw' });
+  const drawSw = () => sw.replaceChildren(...COLORS.map(k => h('button', { type: 'button', class: 'c-' + k + (c.color === k ? ' on' : ''), 'aria-label': k, 'aria-pressed': c.color === k ? 'true' : 'false', onclick: () => { c.color = k; drawSw(); } }, c.color === k ? '✓' : '')));
+  drawSw();
+  const save = async patch => {
+    const next = { ...c, name: name.value.trim(), ...patch };
+    if (!next.name) return toast('거래처 이름을 입력해 주세요.');
+    try { await store.saveClient(next); closeSheet(); toast('저장했습니다.'); refresh(); } catch (e) { toast(errText(e)); }
+  };
+  const del = h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+    if (!(await ask(`"${c.name}" 거래처를 삭제하시겠습니까?`))) return;
+    try { await store.deleteClient(c.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (e) { toast(errText(e)); }
+  } }, '삭제');
+  sheet(h('h3', {}, c.id ? '거래처 수정' : '거래처 추가'),
+    h('form', { onsubmit: ev => { ev.preventDefault(); save({}); } },
+      h('label', {}, '이름'), name, h('label', {}, '색상 (달력에서 "색: 거래처"로 볼 때 쓰는 색)'), sw,
+      h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), h('button', { class: 'btn', type: 'submit' }, '저장')),
+      c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기')),
+      c.id && h('p', { class: 'help' }, '이름·색을 바꾸면 이 거래처의 기존 일정에도 바로 반영됩니다. 이미 일정에 쓰인 거래처는 삭제 대신 숨기기만 됩니다.')));
 }
 
 /* ---------- 일정 유형 관리 (관리자) ---------- */
@@ -746,17 +878,18 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
   const t = today(), toStart = dayCount(t, e.start_date) - 1;
   const when = t > e.end_date ? '종료된 일정' : t >= e.start_date ? (e.start_date === e.end_date ? '오늘' : `진행 중 · ${dayCount(t, e.end_date)}일 남음`) : toStart === 1 ? '내일 시작' : `${toStart}일 뒤 시작`;
   const who = whoOf(e).map(id => S.pmap[id] || { name: '?', title: '' }).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-  const assigned = e.members.length > 0;
+  const assigned = e.members.length > 0, kk = cli(e.client_id);
   sheetAt('full',
     h('div', { class: 'dtop' }, h('button', { class: 'btn ghost sm', onclick: back || closeSheet }, back ? '‹ 목록으로' : '‹ 닫기')),
     h('div', { class: 'dbody' },
       h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label), assigned && h('span', { class: 'badge fill c-gray' }, '관리자 배정')),
       h('h2', { class: 'dtitle' }, e.title),
+      kk && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '거래처'), h('button', { class: 'person', onclick: () => openClient(kk.id, () => openDetail(e, back)) }, h('i', { class: 'dot c-' + kk.color }), kk.name, h('small', {}, '일정 모두 보기 ›'))),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '기간'),
         h('div', { class: 'dbig' }, e.start_date === e.end_date ? md(e.start_date) : `${md(e.start_date)} – ${md(e.end_date)}`),
         h('div', { class: 'ss' }, [e.start_date === e.end_date ? null : `총 ${dayCount(e.start_date, e.end_date)}일`, when].filter(Boolean).join(' · '))),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, assigned ? `참여 팀원 ${who.length}명` : '담당'),
-        h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, p.title && h('small', {}, p.title))))),
+        h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, (p.left_at || p.title) && h('small', {}, p.left_at ? '퇴사' : p.title))))),
       assigned && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '배정한 사람'), h('div', {}, nameOf(e.owner_id) + ' (관리자)')),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '메모'), e.memo ? h('div', { class: 'memo', style: 'margin-top:0' }, e.memo) : h('div', { class: 'ss' }, '메모 없음')),
       !canEdit(e) && h('p', { class: 'help' }, assigned ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.')),
@@ -765,6 +898,9 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
 function openForm(init) {
   const ev = { type: (CATS.find(c => c.active) || CATS[0]).id, title: '', memo: '', members: [], ...init }; ev.end_date = ev.end_date || ev.start_date;
   const before = { title: ev.title, start_date: ev.start_date, end_date: ev.end_date, members: new Set(ev.members) };
+  const kopts = CLIENTS.filter(c => c.active || c.id === ev.client_id);
+  const ksel = h('select', { class: 'inp' }, h('option', { value: '' }, '선택 안 함'), kopts.map(c => h('option', { value: c.id }, c.name)));
+  ksel.value = ev.client_id || '';
   const title = h('input', { type: 'text', maxlength: 60, value: ev.title });
   const s = h('input', { type: 'date', value: ev.start_date, onchange: () => { if (e.value < s.value) e.value = s.value; } }), e = h('input', { type: 'date', value: ev.end_date });
   const memo = h('textarea', { maxlength: 500, placeholder: '집합 시간, 장소 등 (선택)' }); memo.value = ev.memo || '';
@@ -778,10 +914,10 @@ function openForm(init) {
   drawType();
   // 관리자 전용: 이 일정에 넣을 팀원 선택
   const sel = new Set(ev.members), pick = h('div', { class: 'pick' });
-  const team = S.profiles.filter(p => p.approved).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  const team = S.profiles.filter(p => p.approved || sel.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, 'ko'));   // 이미 배정돼 있던 퇴사자는 해제할 수 있게 표시
   const drawPick = () => pick.replaceChildren(
-    ...team.map(p => h('button', { type: 'button', class: sel.has(p.id) ? 'on' : '', 'aria-pressed': sel.has(p.id) ? 'true' : 'false', onclick: () => { sel.has(p.id) ? sel.delete(p.id) : sel.add(p.id); drawPick(); } }, p.name)),
-    h('button', { type: 'button', class: 'all', onclick: () => { const all = sel.size === team.length; sel.clear(); if (!all) team.forEach(p => sel.add(p.id)); drawPick(); } }, sel.size === team.length ? '전체 해제' : '전체 선택'));
+    ...team.map(p => h('button', { type: 'button', class: sel.has(p.id) ? 'on' : '', 'aria-pressed': sel.has(p.id) ? 'true' : 'false', onclick: () => { if (sel.has(p.id)) sel.delete(p.id); else if (p.approved) sel.add(p.id); drawPick(); } }, p.name + (p.approved ? '' : ' (퇴사)'))),
+    h('button', { type: 'button', class: 'all', onclick: () => { const on = team.filter(p => p.approved), all = on.every(p => sel.has(p.id)); on.forEach(p => all ? sel.delete(p.id) : sel.add(p.id)); drawPick(); } }, team.filter(p => p.approved).every(p => sel.has(p.id)) ? '전체 해제' : '전체 선택'));
   drawPick();
   const btn = h('button', { class: 'btn', type: 'submit' }, '저장');
   sheet(h('h3', {}, ev.id ? '일정 수정' : '일정 추가'), h('form', { onsubmit: async x => {
@@ -791,7 +927,7 @@ function openForm(init) {
     if (e.value < s.value) return toast('종료일이 시작일보다 빠릅니다.');
     btn.disabled = true;
     try {
-      const id = await store.save({ id: ev.id, owner_id: S.user.id, type: ev.type, title: title.value.trim(), start_date: s.value, end_date: e.value, memo: memo.value.trim() });
+      const id = await store.save({ id: ev.id, owner_id: S.user.id, type: ev.type, title: title.value.trim(), start_date: s.value, end_date: e.value, memo: memo.value.trim(), client_id: ksel.value || null });
       let jobs = [];
       if (S.me.is_admin) {
         const add = [...sel].filter(u => !before.members.has(u)), del = [...before.members].filter(u => !sel.has(u)), stay = [...sel].filter(u => before.members.has(u));
@@ -814,6 +950,7 @@ function openForm(init) {
     } catch (er) { toast(errText(er)); btn.disabled = false; }
   } },
     h('label', {}, '유형'), seg, h('label', {}, '제목'), title, quick,
+    CLIENTS.length > 0 && h('label', {}, '거래처 (선택)'), CLIENTS.length > 0 && ksel,
     h('div', { class: 'row2' }, h('div', {}, h('label', {}, '시작일'), s), h('div', {}, h('label', {}, '종료일'), e)),
     h('label', {}, '메모'), memo,
     S.me.is_admin && h('label', {}, '팀원 배정 (관리자) — 선택한 팀원의 일정표에 이 일정이 들어갑니다'), S.me.is_admin && pick,
