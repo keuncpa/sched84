@@ -45,7 +45,7 @@ main{flex:1;padding:10px 10px 96px}
 .filters::-webkit-scrollbar{display:none}
 .fchip{flex:none;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 11px;font-size:13px;color:var(--sub)}
 .fchip.on{color:var(--text);border-color:var(--text);font-weight:600}
-.fchip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:var(--cf)}
+.fchip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:var(--cd,var(--cf))}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px}
 .grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));overflow:hidden}
 .dow{font-size:12px;text-align:center;padding:6px 0;color:var(--sub);border-bottom:1px solid var(--line)}
@@ -71,11 +71,13 @@ main{flex:1;padding:10px 10px 96px}
 .c-blue{--cb:#1c2f66;--cf:#c3d4ff}.c-green{--cb:#143d22;--cf:#b4ecc4}.c-red{--cb:#551a1a;--cf:#ffc4c4}.c-purple{--cb:#3a2466;--cf:#dccbff}
 .c-orange{--cb:#55310c;--cf:#ffd3a3}.c-teal{--cb:#0f4744;--cf:#a8ebe6}.c-pink{--cb:#57183a;--cf:#ffc4e0}.c-gray{--cb:#30343c;--cf:#d3d7de}}
 [class*="c-"].fill{background:var(--cb);color:var(--cf)}
-.item .bar[class*="c-"]{background:var(--cf)}
-i.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--cf);margin-right:6px}
+.item .bar[class*="c-"]{background:var(--cd,var(--cf))}
+i.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--cd,var(--cf));margin-right:6px}
 .tags{display:flex;gap:5px;flex-wrap:wrap;margin:3px 0 2px}.tags .badge{margin-left:0}
 .sw{display:flex;gap:8px;flex-wrap:wrap}.sw button{width:36px;height:36px;border-radius:18px;background:var(--cb);border:2px solid transparent;color:var(--cf);font-weight:700}
-.sw button.on{border-color:var(--cf)}
+.sw button.on{outline:3px solid var(--text);outline-offset:2px}
+.sw.many{gap:9px}.sw.many button{width:31px;height:31px;font-size:13px}
+.swlab{font-size:12px;color:var(--sub);margin:10px 0 6px}
 .chk{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:14.5px;color:var(--text)}.chk input{width:20px;height:20px;margin:0}
 .ord{flex:none;width:34px;height:34px;border:1px solid var(--line);border-radius:8px;color:var(--sub)}.ord:disabled{opacity:.3}
 h2{font-size:15px;margin:16px 4px 8px}
@@ -167,7 +169,7 @@ button.person{cursor:pointer}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.10';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-26.11';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -223,6 +225,12 @@ function h(tag, props, ...kids) {
   for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : document.createTextNode(String(c)));
   return el;
 }
+// 거래처용 넓은 팔레트: 색상각 18가지 × (연한 색 h / 진한 색 s) + 회색 = 37가지. CSS 는 여기서 만들어 붙임.
+const HUES = [0, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300, 320, 340];
+const KCOLORS = [...HUES.map(x => 'h' + x), ...HUES.map(x => 's' + x), 'gray'];
+document.head.append(h('style', {},
+  HUES.map(x => `.c-h${x}{--cb:hsl(${x} 85% 90%);--cf:hsl(${x} 75% 26%);--cd:hsl(${x} 70% 42%)}.c-s${x}{--cb:hsl(${x} 62% 40%);--cf:#fff;--cd:hsl(${x} 62% 40%)}`).join('') +
+  '@media (prefers-color-scheme:dark){' + HUES.map(x => `.c-h${x}{--cb:hsl(${x} 42% 23%);--cf:hsl(${x} 85% 84%);--cd:hsl(${x} 70% 62%)}.c-s${x}{--cb:hsl(${x} 58% 46%);--cf:#fff;--cd:hsl(${x} 58% 54%)}`).join('') + '}'));
 let toastTimer;
 function toast(msg) {
   const t = document.getElementById('toast'); t.textContent = msg; t.style.display = 'block';
@@ -769,13 +777,18 @@ function clientCard() {
     CLIENTS.map(c => h('button', { class: 'item', onclick: () => openClientEdit(c) },
       h('span', { style: 'flex:1;min-width:0' }, h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.name, !c.active && h('span', { class: 'badge t-deadline' }, '숨김')), h('div', { class: 'ss' }, '눌러서 이름·색 수정')))),
     !CLIENTS.length && h('div', { class: 'empty' }, '등록된 거래처가 없습니다. 거래처를 등록하면 일정마다 거래처를 지정하고 거래처별로 모아 볼 수 있습니다.'),
-    h('div', { class: 'pad' }, h('button', { class: 'btn ghost', style: 'width:100%', onclick: () => openClientEdit({ name: '', color: COLORS[CLIENTS.length % COLORS.length], active: true }) }, '+ 거래처 추가')));
+    h('div', { class: 'pad' }, h('button', { class: 'btn ghost', style: 'width:100%', onclick: () => openClientEdit({ name: '', color: KCOLORS.find(k => !CLIENTS.some(x => x.color === k)) || KCOLORS[CLIENTS.length % KCOLORS.length], active: true }) }, '+ 거래처 추가')));
 }
 function openClientEdit(init) {
   const c = { ...init };
   const name = h('input', { type: 'text', maxlength: 30, value: c.name, placeholder: '거래처 이름 (30자 이내)' });
-  const sw = h('div', { class: 'sw' });
-  const drawSw = () => sw.replaceChildren(...COLORS.map(k => h('button', { type: 'button', class: 'c-' + k + (c.color === k ? ' on' : ''), 'aria-label': k, 'aria-pressed': c.color === k ? 'true' : 'false', onclick: () => { c.color = k; drawSw(); } }, c.color === k ? '✓' : '')));
+  const sw = h('div', {});
+  const used = new Set(CLIENTS.filter(x => x.id !== c.id).map(x => x.color));   // 다른 거래처가 이미 쓰는 색은 작은 점으로 표시
+  const dotBtn = k => h('button', { type: 'button', class: 'c-' + k + (c.color === k ? ' on' : ''), 'aria-label': '색 ' + k, 'aria-pressed': c.color === k ? 'true' : 'false', onclick: () => { c.color = k; drawSw(); } }, c.color === k ? '✓' : used.has(k) ? '·' : '');
+  const drawSw = () => sw.replaceChildren(...[
+    h('div', { class: 'swlab' }, '연한 색'), h('div', { class: 'sw many' }, HUES.map(x => dotBtn('h' + x))),
+    h('div', { class: 'swlab' }, '진한 색'), h('div', { class: 'sw many' }, HUES.map(x => dotBtn('s' + x)), dotBtn('gray')),
+    !KCOLORS.includes(c.color) && h('div', { class: 'swlab' }, '현재 색: 예전 8색 중 하나 (그대로 두어도 됩니다)')].filter(Boolean));
   drawSw();
   const save = async patch => {
     const next = { ...c, name: name.value.trim(), ...patch };
@@ -788,7 +801,7 @@ function openClientEdit(init) {
   } }, '삭제');
   sheet(h('h3', {}, c.id ? '거래처 수정' : '거래처 추가'),
     h('form', { onsubmit: ev => { ev.preventDefault(); save({}); } },
-      h('label', {}, '이름'), name, h('label', {}, '색상 (달력에서 "색: 거래처"로 볼 때 쓰는 색)'), sw,
+      h('label', {}, '이름'), name, h('label', {}, '색상 (달력에서 "색: 거래처"로 볼 때 쓰는 색 · 가운데 점은 다른 거래처가 쓰는 색)'), sw,
       h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), h('button', { class: 'btn', type: 'submit' }, '저장')),
       c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기')),
       c.id && h('p', { class: 'help' }, '이름·색을 바꾸면 이 거래처의 기존 일정에도 바로 반영됩니다. 이미 일정에 쓰인 거래처는 삭제 대신 숨기기만 됩니다.')));
