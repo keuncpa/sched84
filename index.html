@@ -263,7 +263,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 .pick button.all{background:none;box-shadow:inset 0 0 0 .5px var(--sub)}
 .roles{border:0;background:var(--fillc)}.roles>div{border-bottom:.5px solid var(--line)}.roles select{border:0;background:var(--card)}
 .ord{border:0;background:var(--fillc)}
-.ordn{flex:none;width:22px;text-align:center;color:var(--sub);font-size:14px;font-variant-numeric:tabular-nums}
+.ordpair{display:inline-flex;gap:4px;margin-left:2px}.ord.xs{width:28px;height:28px;border-radius:14px;font-size:10px}
 .team tr.me .who{color:var(--brand);box-shadow:inset 3px 0 0 var(--brand)}
 .sw button.on{outline:2.5px solid var(--brand)}
 .install{background:var(--card);border-bottom:.5px solid var(--line)}
@@ -281,7 +281,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.4';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.5';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -945,13 +945,25 @@ function viewSet() {
     if (!(await ask(`${p.name} 님을 퇴사 처리하시겠습니까?`, { sub: '이 계정으로는 더 이상 일정표를 볼 수 없게 됩니다. 이 사람이 등록했거나 배정됐던 일정은 지워지지 않고 그대로 남습니다.' }))) return;
     act(() => store.setLeft(p.id, true));
   };
-  const row = p => h('div', { class: 'item' },
+  // 서열 순서: 관리자가 구성원 줄의 작은 ▲▼로 옮김 → 팀 보기·엑셀·배정 목록에 같은 순서로 나옴
+  const ranked = S.profiles.filter(p => p.approved && !p.left_at).sort(bySeniority);
+  const moveOrder = async (i, j) => {
+    const arr = [...ranked]; [arr[i], arr[j]] = [arr[j], arr[i]];
+    // 전체를 10, 20, 30… 으로 다시 매기고, 번호가 달라진 사람만 저장
+    const changed = arr.map((q, k) => [q.id, (k + 1) * 10, q.sort]).filter(([, n, old]) => old !== n).map(([id, n]) => [id, n]);
+    try { await store.setOrder(changed); await refresh(); } catch (e) { toast(errText(e)); }
+  };
+  const arrows = p => { const i = ranked.indexOf(p); return i < 0 ? null : h('span', { class: 'ordpair' },
+    h('button', { class: 'ord xs', 'aria-label': `${p.name} 위로`, disabled: i === 0, onclick: () => moveOrder(i, i - 1) }, '▲'),
+    h('button', { class: 'ord xs', 'aria-label': `${p.name} 아래로`, disabled: i === ranked.length - 1, onclick: () => moveOrder(i, i + 1) }, '▼')); };
+  const row = p => h('div', { class: 'item', style: 'align-items:center' },
     h('span', { style: 'flex:1' }, h('div', { class: 'tt' }, p.name, p.is_admin && h('span', { class: 'badge t-field' }, '관리자'), p.left_at ? h('span', { class: 'badge fill c-gray' }, '퇴사') : !p.approved && h('span', { class: 'badge t-deadline' }, '승인 대기')), h('div', { class: 'ss' }, p.title || '')),
     S.me.is_admin && h('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
       p.approved && (p.id !== S.user.id || admins > 1) && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setAdmin(p.id, !p.is_admin)) }, p.is_admin ? '관리자 해제' : '관리자 지정'),
       p.approved && p.id !== S.user.id && h('button', { class: 'btn sm ghost', onclick: leave(p) }, '퇴사 처리'),
       !p.approved && !p.left_at && h('button', { class: 'btn sm', onclick: () => act(() => store.setApproved(p.id, true)) }, '승인'),
-      p.left_at && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setLeft(p.id, false)) }, '복귀')));
+      p.left_at && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setLeft(p.id, false)) }, '복귀'),
+      arrows(p)));
   const byName = (a, b) => a.approved - b.approved || bySeniority(a, b);   // 승인 대기가 맨 위, 그 아래는 서열순
   const actives = S.profiles.filter(p => !p.left_at).sort(byName), lefts = S.profiles.filter(p => p.left_at).sort(byName);
   const members = actives.map(row);
@@ -959,8 +971,8 @@ function viewSet() {
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
     h('h2', {}, '엑셀로 내려받기'), exportCard(),
     h('h2', {}, '일정 삭제'), delAskCard(),
-    h('h2', {}, `구성원 (${actives.length}명)`), h('div', { class: 'card list' }, members),
-    S.me.is_admin && h('h2', {}, '구성원 순서 (관리자)'), S.me.is_admin && orderCard(),
+    h('h2', {}, `구성원 (${actives.length}명)`), h('div', { class: 'card list', id: 'members' }, members),
+    S.me.is_admin && h('p', { class: 'help pad', style: 'padding-top:6px' }, '▲▼로 순서를 바꾸면 팀 보기, 엑셀, 팀원 배정 목록에 그 순서로 나옵니다. 새로 승인된 사람은 맨 아래에 들어옵니다.'),
     lefts.length > 0 && h('h2', {}, `퇴사자 (${lefts.length}명)`), lefts.length > 0 && h('div', { class: 'card list' }, lefts.map(row)),
     lefts.length > 0 && h('p', { class: 'help pad', style: 'padding-top:6px' }, '퇴사자가 등록했거나 배정됐던 일정은 지워지지 않고 그대로 남아 있습니다.'),
     S.me.is_admin && h('h2', {}, `거래처 관리 (관리자) · ${CLIENTS.length}곳`), S.me.is_admin && clientCard(),
@@ -972,23 +984,6 @@ function viewSet() {
     h('p', { class: 'help', style: 'text-align:center' }, '앱 버전 ' + APP_VERSION)].filter(Boolean));
 }
 
-// 구성원 순서(서열): 관리자가 ▲▼로 옮김 → 팀 보기·엑셀·배정 목록에 같은 순서로 나옴
-function orderCard() {
-  const list = S.profiles.filter(p => p.approved && !p.left_at).sort(bySeniority);
-  const move = async (i, j) => {
-    const arr = [...list]; [arr[i], arr[j]] = [arr[j], arr[i]];
-    // 전체를 10, 20, 30… 으로 다시 매기고, 번호가 달라진 사람만 저장
-    const changed = arr.map((p, k) => [p.id, (k + 1) * 10, p.sort]).filter(([, n, old]) => old !== n).map(([id, n]) => [id, n]);
-    try { await store.setOrder(changed); await refresh(); } catch (e) { toast(errText(e)); }
-  };
-  return h('div', {}, h('div', { class: 'card list', id: 'ordcard' },
-    list.map((p, i) => h('div', { class: 'item', style: 'align-items:center' },
-      h('span', { class: 'ordn' }, i + 1),
-      h('span', { style: 'flex:1;min-width:0' }, h('div', { class: 'tt' }, p.name), p.title && h('div', { class: 'ss' }, p.title)),
-      h('button', { class: 'ord', 'aria-label': `${p.name} 위로`, disabled: i === 0, onclick: () => move(i, i - 1) }, '▲'),
-      h('button', { class: 'ord', 'aria-label': `${p.name} 아래로`, disabled: i === list.length - 1, onclick: () => move(i, i + 1) }, '▼')))),
-    h('p', { class: 'help pad', style: 'padding-top:6px' }, '팀 보기, 엑셀, 팀원 배정 목록에 이 순서로 나옵니다. 새로 승인된 사람은 맨 아래에 들어옵니다.'));
-}
 function delAskCard() {
   const chk = h('input', { type: 'checkbox', id: 'askdel', onchange: () => { LS.set(SKIP_DEL, chk.checked ? '0' : '1'); toast(chk.checked ? '삭제 전에 확인 창을 띄웁니다.' : '확인 없이 바로 삭제합니다.'); } });
   chk.checked = LS.get(SKIP_DEL) !== '1';
