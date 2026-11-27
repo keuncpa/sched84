@@ -224,6 +224,7 @@ h2{font-size:13px;font-weight:400;color:var(--sub);margin:22px 14px 7px}
 .cell.out .num{opacity:.3}.cell.out .chip{opacity:.55}
 .chip{border-radius:4px;padding:1px 4px;margin:2px 1.5px 0;font-weight:500}
 .more{padding-left:5px}
+.grid .chip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.grid .chip b,.grid .chip u{display:inline;white-space:nowrap;-webkit-line-clamp:unset;line-height:inherit}
 /* 목록: 테두리 없는 둥근 흰 묶음, 안쪽으로 들어간 구분선 */
 .item{padding:11px 14px;gap:11px;border-bottom:0;position:relative}
 .item+.item::before{content:'';position:absolute;left:29px;right:0;top:0;height:.5px;background:var(--line)}
@@ -285,7 +286,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.13';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.14';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -882,6 +883,12 @@ const chipKids = e => {
   const what = e.title.replace(k.name, '').trim() || e.title;   // 제목에 거래처 이름이 이미 들어 있으면 중복을 뺌
   return [h('b', {}, k.name), h('u', {}, what)];
 };
+// 달력 칸의 칩: 한 줄만. 거래처가 있으면 [거래처 무슨일정], 없으면 [유형 제목] (사람 이름은 넣지 않음 — 누르면 상세에서 확인)
+const calChipKids = e => {
+  const k = cli(e.client_id), head = k ? k.name : cat(e.type).label;
+  const rest = e.title.replace(head, '').trim();
+  return [h('b', {}, head), rest && h('u', {}, ' ' + rest)];
+};
 const chipText = e => { if (cat(e.type).shared) return e.title; const p = whoOf(e); return `${nameOf(p.includes(S.user.id) ? S.user.id : p[0])}${p.length > 1 ? '+' + (p.length - 1) : ''} ${e.title}`; };
 function eventItem(e, showWho = true, back = null) {
   return h('button', { class: 'item', onclick: () => openDetail(e, back) },
@@ -896,10 +903,10 @@ function viewCal() {
   const [start, , rows] = monthSpan(), t = today(), mon = S.month.slice(0, 7);
   const grid = h('div', { class: 'grid card' + (slideDir > 0 ? ' inL' : slideDir < 0 ? ' inR' : '') }, DOW.map((d, i) => h('div', { class: 'dow' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') }, d)));
   for (let i = 0; i < rows * 7; i++) {
-    const d = addDays(start, i), evs = onDay(d), dw = i % 7, max = 3;
+    const d = addDays(start, i), evs = onDay(d), dw = i % 7, max = 4;   // 칩이 한 줄이라 4개까지
     grid.append(h('button', { class: 'cell' + (d.slice(0, 7) !== mon ? ' out' : '') + (d === t ? ' today' : '') + (d === S.sel ? ' sel' : ''), onclick: () => { S.sel = d; viewCal(); openDay(d); } },
       h('span', { class: 'numrow' }, h('span', { class: 'num' + (dw === 0 ? ' sun' : dw === 6 ? ' sat' : '') }, parse(d).getDate()), d === t && h('span', { class: 'todaytag' }, '오늘')),
-      evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip ' + ec(e) }, chipKids(e))),
+      evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip ' + ec(e) }, calChipKids(e))),
       evs.length > max && h('span', { class: 'more' }, `+${evs.length - (max - 1)}`)));
   }
   slideDir = 0;
