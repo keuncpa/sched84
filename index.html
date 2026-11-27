@@ -279,7 +279,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.2';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.3';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -1051,7 +1051,7 @@ const XL = (() => {
     const inQ = events.filter(e => e.start_date <= qb && e.end_date >= qa);
     const busy = new Set(inQ.flatMap(e => cat(e.type).shared ? [] : whoOf(e)));
     const people = S.profiles.filter(p => (p.approved && !p.left_at) || busy.has(p.id)).sort((a, b) => rankOf(a) - rankOf(b) || a.name.localeCompare(b.name, 'ko'));
-    put(0, 1, `${DEPT} 일정표 · ${md(today())} 기준 (일정표 앱에서 내려받음)`, { border: false, left: true });
+    put(0, 1, `감사 ${DEPT} 일정표 · ${(t => `${String(t.getFullYear()).slice(2)}. ${t.getMonth() + 1}. ${t.getDate()}(${DOW[t.getDay()]})`)(parse(today()))} 기준 (일정표 앱에서 내려받음)`, { border: false, left: true });
     let r = 1;
     for (let m = q * 3 - 3; m < q * 3; m++) {
       const n = new Date(year, m + 1, 0).getDate(), day = d => `${year}-${pad(m + 1)}-${pad(d)}`, dow = d => new Date(year, m, d).getDay(), we = d => dow(d) === 0 || dow(d) === 6;
