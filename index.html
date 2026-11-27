@@ -284,7 +284,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.10';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.11';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -540,7 +540,7 @@ const nameOf = id => (S.pmap[id] && S.pmap[id].name) || '?';
 const bySeniority = (a, b) => (a.sort ?? 100000) - (b.sort ?? 100000) || a.name.localeCompare(b.name, 'ko');
 const whoOf = e => (e.members && e.members.length) ? e.members : [e.owner_id];   // 배정이 있으면 배정된 사람들, 없으면 작성자
 const isMine = e => whoOf(e).includes(S.user.id);
-const names = (e, max = 3) => { const n = whoOf(e).map(nameOf).sort((a, b) => a.localeCompare(b, 'ko')); return n.length > max ? `${n.slice(0, max).join(', ')} 외 ${n.length - max}명` : n.join(', '); };
+const names = (e, max = 3) => { const n = whoOf(e).map(id => S.pmap[id] || { name: nameOf(id) }).map(q => ({ name: q.name, sort: q.left_at ? 1e6 : q.sort })).sort(bySeniority).map(q => q.name); return n.length > max ? `${n.slice(0, max).join(', ')} 외 ${n.length - max}명` : n.join(', '); };
 const visible = e => !S.hide.has(e.type) && (!S.onlyMine || isMine(e)) && (!S.client || e.client_id === S.client);
 // 칩·막대 색: 기본은 거래처 색(거래처가 없는 일정은 유형 색). '색: 유형'으로 바꾸면 전부 유형 색.
 const ec = e => { const k = S.colorBy === 'client' ? cli(e.client_id) : null; return k ? 'fill c-' + k.color : cc(e.type); };
@@ -914,10 +914,12 @@ function viewTeam() {
   let body;
   if (byClient) {
     // 거래처별: 줄 = 거래처, 칸 = 그날 그 거래처의 일정 제목 (누가 가는지는 칩을 누르면 상세에서 확인)
-    const ks = CLIENTS.filter(c => c.active || S.events.some(e => e.client_id === c.id));
+    // 이 주에 일정이 있는 거래처만 줄로 보여 줌 (위의 거래처 선택·유형 필터도 그대로 적용)
+    const inWeek = new Set(S.events.filter(e => visible(e) && e.client_id && e.start_date <= days[6] && e.end_date >= days[0]).map(e => e.client_id));
+    const ks = CLIENTS.filter(c => inWeek.has(c.id));
     body = ks.map(c => h('tr', {}, h('td', { class: 'who k', onclick: () => openClient(c.id) }, h('i', { class: 'dot c-' + c.color }), c.name),
       days.map(d => h('td', { class: d === t ? 'tod' : '' }, onDay(d).filter(e => e.client_id === c.id).map(e => chip(e, e.title.replace(c.name, '').trim() || e.title))))));
-    if (!ks.length) body = [h('tr', {}, h('td', { colspan: 8, class: 'empty' }, '등록된 거래처가 없습니다.'))];
+    if (!ks.length) body = [h('tr', {}, h('td', { colspan: 8, class: 'empty' }, S.client ? '이 주에는 선택한 거래처의 일정이 없습니다.' : '이 주에는 거래처 일정이 없습니다.'))];
   } else {
     // 팀원별: 재직자 전원 + (퇴사자라도) 이 주에 일정이 있는 사람
     const busy = new Set(); S.events.forEach(e => { if (!cat(e.type).shared) whoOf(e).forEach(id => busy.add(id)); });
@@ -1292,8 +1294,8 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
   const t = today();
   const assigned = e.members.length > 0, kk = cli(e.client_id), er = e.roles || {};
   // 배정 일정이면 그 일정에서의 역할, 개인 일정이면 프로필 직급을 이름 옆에 표시
-  const who = whoOf(e).map(id => { const q = S.pmap[id] || { name: '?', title: '' }; return { name: q.name, left: !!q.left_at, tag: assigned ? (er[id] || '') : (q.title || '') }; })
-    .sort((a, b) => (assigned ? roleRank(a.tag) - roleRank(b.tag) : 0) || a.name.localeCompare(b.name, 'ko'));
+  const who = whoOf(e).map(id => { const q = S.pmap[id] || { name: '?', title: '' }; return { name: q.name, sort: q.left_at ? 1e6 : q.sort, left: !!q.left_at, tag: assigned ? (er[id] || '') : (q.title || '') }; })
+    .sort(bySeniority);   // 설정의 구성원 순서(서열)대로, 퇴사자는 뒤로
   sheetAt('full',
     h('div', { class: 'dtop' }, h('button', { class: 'btn ghost sm', onclick: back || closeSheet }, back ? '‹ 목록으로' : '‹ 닫기')),
     h('div', { class: 'dbody' },
@@ -1305,7 +1307,6 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, assigned ? `참여 팀원 ${who.length}명` : '담당'),
         h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, (p.tag || p.left) && h('small', {}, [p.tag, p.left && '퇴사'].filter(Boolean).join(' · ')))))),
       assigned && !e.source && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '배정한 사람'), h('div', {}, nameOf(e.owner_id) + ' (관리자)')),
-      e.source && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '출처'), h('div', {}, '기존 엑셀 일정표에서 옮긴 일정')),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '메모'), e.memo ? h('div', { class: 'memo', style: 'margin-top:0' }, e.memo) : h('div', { class: 'ss' }, '메모 없음')),
       !canEdit(e) && h('p', { class: 'help' }, assigned ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.')),
     (canDelete(e) || canEdit(e)) && h('div', { class: 'btns dfoot' }, canDelete(e) && del, canEdit(e) && h('button', { class: 'btn', onclick: () => openForm(e) }, '수정')));
