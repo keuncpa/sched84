@@ -224,7 +224,7 @@ h2{font-size:13px;font-weight:400;color:var(--sub);margin:22px 14px 7px}
 .cell.out .num{opacity:.3}.cell.out .chip{opacity:.55}
 .chip{border-radius:4px;padding:1px 4px;margin:2px 1.5px 0;font-weight:500}
 .more{padding-left:5px}
-.grid .chip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.grid .chip b,.grid .chip u{display:inline;white-space:nowrap;-webkit-line-clamp:unset;line-height:inherit}
+.grid .chip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px;letter-spacing:-.06em;padding:1px 2px;margin:2px .5px 0}.grid .cell{padding-left:0;padding-right:0}.grid .chip b,.grid .chip u{display:inline;white-space:nowrap;-webkit-line-clamp:unset;line-height:inherit}
 /* 목록: 테두리 없는 둥근 흰 묶음, 안쪽으로 들어간 구분선 */
 .item{padding:11px 14px;gap:11px;border-bottom:0;position:relative}
 .item+.item::before{content:'';position:absolute;left:29px;right:0;top:0;height:.5px;background:var(--line)}
@@ -286,7 +286,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.15.40';   // 날짜.그날 몇 번째 배포.처음부터 누적 배포 횟수 — version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.16.41';   // 날짜.그날 몇 번째 배포.처음부터 누적 배포 횟수 — version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
