@@ -287,7 +287,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-28.1.42';   // 날짜.그날 몇 번째 배포.처음부터 누적 배포 횟수 — version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-28.2.43';   // 날짜.그날 몇 번째 배포.처음부터 누적 배포 횟수 — version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -900,6 +900,9 @@ const calChipKids = e => {
   const rest = e.title.replace(head, '').trim();
   return [h('b', {}, head), rest && h('u', {}, ' ' + rest)];
 };
+// 같은 거래처(없으면 같은 유형)에 제목까지 같은 일정은 화면에서 하나로 보여 줌.
+// (한 업무라도 사람마다 기간이 다르면 일정이 여러 개로 등록되는데, 달력 칸에서는 같은 글자가 여러 번 나올 필요가 없음)
+const uniqEvents = list => { const seen = new Set(); return list.filter(e => { const k = (e.client_id || e.type) + '|' + e.title; if (seen.has(k)) return false; seen.add(k); return true; }); };
 const chipText = e => { if (cat(e.type).shared) return e.title; const p = whoOf(e); return `${nameOf(p.includes(S.user.id) ? S.user.id : p[0])}${p.length > 1 ? '+' + (p.length - 1) : ''} ${e.title}`; };
 function eventItem(e, showWho = true, back = null) {
   return h('button', { class: 'item', onclick: () => openDetail(e, back) },
@@ -914,7 +917,7 @@ function viewCal() {
   const [start, , rows] = monthSpan(), t = today(), mon = S.month.slice(0, 7);
   const grid = h('div', { class: 'grid card' + (slideDir > 0 ? ' inL' : slideDir < 0 ? ' inR' : '') }, DOW.map((d, i) => h('div', { class: 'dow' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') }, d)));
   for (let i = 0; i < rows * 7; i++) {
-    const d = addDays(start, i), evs = onDay(d), dw = i % 7, max = 4;   // 칩이 한 줄이라 4개까지
+    const d = addDays(start, i), evs = uniqEvents(onDay(d)), dw = i % 7, max = 4;   // 칩이 한 줄이라 4개까지
     grid.append(h('button', { class: 'cell' + (d.slice(0, 7) !== mon ? ' out' : '') + (d === t ? ' today' : '') + (d === S.sel ? ' sel' : ''), onclick: () => { S.sel = d; viewCal(); openDay(d); } },
       h('span', { class: 'numrow' }, h('span', { class: 'num' + (dw === 0 ? ' sun' : dw === 6 ? ' sat' : '') }, parse(d).getDate()), d === t && h('span', { class: 'todaytag' }, '오늘')),
       evs.slice(0, evs.length > max ? max - 1 : max).map(e => h('span', { class: 'chip ' + ec(e) }, calChipKids(e))),
@@ -940,7 +943,9 @@ function viewTeam() {
     const inWeek = new Set(S.events.filter(e => visible(e) && e.client_id && e.start_date <= days[6] && e.end_date >= days[0]).map(e => e.client_id));
     const ks = CLIENTS.filter(c => inWeek.has(c.id));
     body = ks.map(c => h('tr', {}, h('td', { class: 'who k', onclick: () => openClient(c.id) }, h('i', { class: 'dot c-' + c.color }), c.name),
-      days.map(d => h('td', { class: d === t ? 'tod' : '' }, onDay(d).filter(e => e.client_id === c.id).map(e => chip(e, e.title.replace(c.name, '').trim() || e.title))))));
+      days.map(d => { const all = onDay(d).filter(e => e.client_id === c.id); return h('td', { class: d === t ? 'tod' : '' }, uniqEvents(all).map(e => { const same = all.filter(x => x.title === e.title); const text = e.title.replace(c.name, '').trim() || e.title;
+        // 같은 제목이 여러 건(사람마다 기간이 다름)이면 칩은 하나만, 누르면 그날 목록을 보여 줌
+        return same.length > 1 ? h('button', { class: 'chip ' + ec(e), onclick: ev => { ev.stopPropagation(); openDay(d); } }, text) : chip(e, text); })); })));
     if (!ks.length) body = [h('tr', {}, h('td', { colspan: 8, class: 'empty' }, S.client ? '이 주에는 선택한 거래처의 일정이 없습니다.' : '이 주에는 거래처 일정이 없습니다.'))];
   } else {
     // 팀원별: 재직자 전원 + (퇴사자라도) 이 주에 일정이 있는 사람
@@ -1218,6 +1223,14 @@ function deliverFile(blob, name) {
 }
 
 /* ---------- 거래처 관리 (관리자) ---------- */
+// 새 거래처의 기본 색: 선택 목록에 보이는 거래처들의 색과 가장 덜 비슷한 색을 골라 줌 (같은 밝기에서는 색상각이 먼 것, 그다음은 덜 쓰인 것)
+const NAMED_HUE = { blue: 215, green: 135, red: 5, purple: 285, orange: 35, teal: 190, pink: 345 };
+const colorHK = k => { const m = /^([hs])(\d+)$/.exec(k || ''); return m ? [+m[2], m[1] === 's' ? 'D' : 'L'] : k in NAMED_HUE ? [NAMED_HUE[k], 'L'] : null; };
+function freshColor() {
+  const used = CLIENTS.filter(c => c.active).map(c => c.color), cnt = k => used.filter(x => x === k).length;
+  const gap = k => { const a = colorHK(k); return Math.min(999, ...used.map(colorHK).filter(Boolean).filter(b => b[1] === a[1]).map(b => { const d = Math.abs(a[0] - b[0]) % 360; return Math.min(d, 360 - d); })); };
+  return KCOLORS.filter(k => k !== 'gray').map(k => [gap(k), -cnt(k), k]).sort((x, y) => y[0] - x[0] || y[1] - x[1])[0][2];
+}
 // 거래처 관리: 거래처가 많아도 화면을 다 차지하지 않게 — 검색 칸 + 높이가 정해진 목록(안에서 스크롤), 숨긴 거래처는 접어 둠
 let clientQ = '', clientShowHidden = false;
 function clientCard() {
@@ -1236,7 +1249,7 @@ function clientCard() {
   draw();
   return h('div', { class: 'card' },
     h('div', { class: 'pad', style: 'display:flex;gap:8px;padding-bottom:8px' }, CLIENTS.length > 6 ? search : h('span', { style: 'flex:1' }),
-      h('button', { class: 'btn ghost', style: 'flex:none;padding:10px 14px', onclick: () => openClientEdit({ name: '', color: KCOLORS.find(k => !CLIENTS.some(x => x.color === k)) || KCOLORS[CLIENTS.length % KCOLORS.length], active: true }) }, '+ 추가')),
+      h('button', { class: 'btn ghost', style: 'flex:none;padding:10px 14px', onclick: () => openClientEdit({ name: '', color: freshColor(), active: true }) }, '+ 추가')),
     box, tog);
 }
 function openClientEdit(init) {
