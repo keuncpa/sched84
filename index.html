@@ -270,6 +270,9 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 .link{color:var(--brand);text-decoration:none}
 .auth h1{font-size:30px;font-weight:700;letter-spacing:-.02em}
 #toast{background:rgba(44,44,46,.94);border-radius:999px;padding:10px 18px}
+/* 전체 화면(일정 상세·거래처 화면)에서도 아래 탭 바는 계속 위에 떠 있음 */
+body.fullpg .tabs{z-index:11}
+.ov.full .sheet{padding-bottom:calc(env(safe-area-inset-bottom) + 74px)}
 </style>
 </head>
 <body>
@@ -281,7 +284,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.6';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.7';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -734,7 +737,7 @@ const TAB_ICONS = {
   mine: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5v-1a5.5 5.5 0 0 1 5.5-5.5h4a5.5 5.5 0 0 1 5.5 5.5v1"/>',
   set: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
 };
-function setView(v) { S.view = v; refresh(); window.scrollTo(0, 0); }
+function setView(v) { closeSheet(); S.view = v; refresh(); window.scrollTo(0, 0); }   // 상세 화면에서 탭을 눌러도 바로 그 탭으로 이동
 function renderChrome() {
   const tabs = [['cal', '달력'], ['team', '팀 보기'], ['mine', '내 일정'], ['set', '설정']];
   elTabs.replaceChildren(...tabs.map(([v, lb]) => { const ic = h('b', { 'aria-hidden': 'true' }); ic.innerHTML = `<svg viewBox="0 0 24 24">${TAB_ICONS[v]}</svg>`; return h('button', { class: S.view === v ? 'on' : '', onclick: () => setView(v) }, ic, lb); }));
@@ -1234,8 +1237,9 @@ function sheetAt(cls, ...kids) {   // cls 'mid' = 화면 가운데에 띄움
   closeSheet(); S.sheet = true;
   const ov = h('div', { class: 'ov ' + cls, id: 'ov', onclick: e => { if (e.target === ov) closeSheet(); } }, h('div', { class: 'sheet' }, kids));
   document.body.append(ov);
+  document.body.classList.toggle('fullpg', cls === 'full');   // 전체 화면(일정 상세·거래처)에서는 아래 탭 바를 계속 보이게 함
 }
-function closeSheet() { const o = document.getElementById('ov'); if (o) o.remove(); S.sheet = false; }
+function closeSheet() { const o = document.getElementById('ov'); if (o) o.remove(); S.sheet = false; document.body.classList.remove('fullpg'); }
 // 달력에서 날짜를 누르면: 그날 일정을 화면 가운데에 펼침
 function openDay(d) {
   const evs = onDay(d), back = () => openDay(d);
