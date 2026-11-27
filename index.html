@@ -284,7 +284,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.9';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.10';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -390,7 +390,7 @@ const authStorage = {
 /* ---------- 저장소: 실제 서버(Supabase) ---------- */
 function supaStore(sb) {
   const ok = ({ data, error }) => { if (error) throw error; return data; };
-  const cols = 'id,owner_id,type,title,start_date,end_date,memo,client_id,event_members(user_id,role)';
+  const cols = 'id,owner_id,type,title,start_date,end_date,memo,client_id,source,event_members(user_id,role)';
   const norm = rows => rows.map(({ event_members, ...e }) => ({ ...e, members: (event_members || []).map(m => m.user_id), roles: Object.fromEntries((event_members || []).filter(m => m.role).map(m => [m.user_id, m.role])) }));
   return {
     async session() { const { data } = await sb.auth.getSession(); return data.session ? data.session.user : null; },
@@ -400,9 +400,11 @@ function supaStore(sb) {
     async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname.replace(/index\.html$/, '') })); },
     async setPassword(pw) { ok(await sb.auth.updateUser({ password: pw })); },
     async profiles() {
-      const r = await sb.from('profiles').select('id,name,title,approved,is_admin,left_at,sort').order('name');
+      const r = await sb.from('profiles').select('id,name,title,approved,is_admin,left_at,sort,pending').order('name');
       return r.error ? ok(await sb.from('profiles').select('id,name,title,approved,is_admin,left_at').order('name')) : r.data;   // 순서 칸(v7)이 아직 없는 서버에서도 동작
     },
+    // 이름만 먼저 등록해 둔 자리(pending)의 일정을 실제 가입 계정으로 넘김
+    async linkMember(from, to) { const r = await sb.rpc('link_member', { p_from: from, p_to: to }); if (r.error) throw r.error; },
     async setOrder(list) { await Promise.all(list.map(async ([id, sort]) => { const d = ok(await sb.from('profiles').update({ sort }).eq('id', id).select('id,sort')); if (!d || !d.length || d[0].sort !== sort) throw new Error('permission denied'); })); },
     async clients() { return ok(await sb.from('clients').select('id,name,color,active').order('name')); },
     async saveClient(c) {
@@ -484,6 +486,11 @@ function demoStore() {
     async session() { return { id: 'me' }; },
     async signIn() {}, async signUp() { return true; }, async resetRequest() {}, async setPassword() {}, async signOut() { try { localStorage.removeItem(KEY); } catch (e) {} },
     async profiles() { return cp(db.profiles); },
+    async linkMember(from, to) {
+      const f = db.profiles.find(p => p.id === from), t = db.profiles.find(p => p.id === to);
+      for (const e of db.events) { if (e.owner_id === from) e.owner_id = to; if (e.members.includes(from)) { e.members = [...new Set(e.members.map(u => u === from ? to : u))]; if (e.roles && e.roles[from]) { e.roles[to] = e.roles[to] || e.roles[from]; delete e.roles[from]; } } }
+      Object.assign(t, { approved: true, left_at: null, sort: f.sort }); db.profiles = db.profiles.filter(p => p.id !== from); persist();
+    },
     async setOrder(list) { for (const [id, sort] of list) db.profiles.find(p => p.id === id).sort = sort; persist(); },
     async clients() { return cp(db.clients); },
     async saveClient(c) {
@@ -975,11 +982,20 @@ function viewSet() {
   const arrows = p => { const i = ranked.indexOf(p); return i < 0 ? null : h('span', { class: 'ordpair' },
     h('button', { class: 'ord xs', 'aria-label': `${p.name} 위로`, disabled: i === 0, onclick: () => moveOrder(i, i - 1) }, '▲'),
     h('button', { class: 'ord xs', 'aria-label': `${p.name} 아래로`, disabled: i === ranked.length - 1, onclick: () => moveOrder(i, i + 1) }, '▼')); };
+  // 미가입(이름만 먼저 등록한) 팀원이 실제로 가입하면: 승인 대기 줄에서 "기존 이름과 연결"을 골라 일정을 넘겨받게 함
+  const waiting = S.profiles.filter(p => p.pending).sort(bySeniority);
+  const linkSelect = p => h('select', { class: 'fsel', 'aria-label': `${p.name} 기존 이름과 연결`, onchange: async ev => {
+    const from = waiting.find(w => w.id === ev.target.value); ev.target.value = '';
+    if (!from) return;
+    if (!(await ask(`가입한 "${p.name}" 님을 미리 등록해 둔 "${from.name}"와 연결하시겠습니까?`, { sub: `"${from.name}" 이름으로 들어 있던 일정이 이 계정으로 넘어가고, 바로 승인됩니다. 되돌릴 수 없습니다.` }))) return;
+    act(() => store.linkMember(from.id, p.id));
+  } }, h('option', { value: '' }, '기존 이름과 연결'), waiting.map(w => h('option', { value: w.id }, w.name)));
   const row = p => h('div', { class: 'item', style: 'align-items:center' },
-    h('span', { style: 'flex:1' }, h('div', { class: 'tt' }, p.name, p.is_admin && h('span', { class: 'badge t-field' }, '관리자'), p.left_at ? h('span', { class: 'badge fill c-gray' }, '퇴사') : !p.approved && h('span', { class: 'badge t-deadline' }, '승인 대기')), h('div', { class: 'ss' }, p.title || '')),
+    h('span', { style: 'flex:1' }, h('div', { class: 'tt' }, p.name, p.is_admin && h('span', { class: 'badge t-field' }, '관리자'), p.left_at ? h('span', { class: 'badge fill c-gray' }, '퇴사') : p.pending ? h('span', { class: 'badge fill c-gray' }, '미가입') : !p.approved && h('span', { class: 'badge t-deadline' }, '승인 대기')), h('div', { class: 'ss' }, p.title || '')),
     S.me.is_admin && h('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
-      p.approved && (p.id !== S.user.id || admins > 1) && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setAdmin(p.id, !p.is_admin)) }, p.is_admin ? '관리자 해제' : '관리자 지정'),
-      p.approved && p.id !== S.user.id && h('button', { class: 'btn sm ghost', onclick: leave(p) }, '퇴사 처리'),
+      p.approved && !p.pending && (p.id !== S.user.id || admins > 1) && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setAdmin(p.id, !p.is_admin)) }, p.is_admin ? '관리자 해제' : '관리자 지정'),
+      p.approved && !p.is_admin && h('button', { class: 'btn sm ghost', onclick: leave(p) }, '퇴사 처리'),   // 관리자는 퇴사 처리 버튼 없음(먼저 관리자 해제)
+      !p.approved && !p.left_at && waiting.length > 0 && linkSelect(p),
       !p.approved && !p.left_at && h('button', { class: 'btn sm', onclick: () => act(() => store.setApproved(p.id, true)) }, '승인'),
       p.left_at && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setLeft(p.id, false)) }, '복귀'),
       arrows(p)));
@@ -1288,7 +1304,8 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
         h('div', { class: 'dbig' }, e.start_date === e.end_date ? md(e.start_date) : `${md(e.start_date)} – ${md(e.end_date)}`)),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, assigned ? `참여 팀원 ${who.length}명` : '담당'),
         h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, (p.tag || p.left) && h('small', {}, [p.tag, p.left && '퇴사'].filter(Boolean).join(' · ')))))),
-      assigned && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '배정한 사람'), h('div', {}, nameOf(e.owner_id) + ' (관리자)')),
+      assigned && !e.source && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '배정한 사람'), h('div', {}, nameOf(e.owner_id) + ' (관리자)')),
+      e.source && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '출처'), h('div', {}, '기존 엑셀 일정표에서 옮긴 일정')),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '메모'), e.memo ? h('div', { class: 'memo', style: 'margin-top:0' }, e.memo) : h('div', { class: 'ss' }, '메모 없음')),
       !canEdit(e) && h('p', { class: 'help' }, assigned ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.')),
     (canDelete(e) || canEdit(e)) && h('div', { class: 'btns dfoot' }, canDelete(e) && del, canEdit(e) && h('button', { class: 'btn', onclick: () => openForm(e) }, '수정')));
