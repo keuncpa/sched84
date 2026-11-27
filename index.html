@@ -284,7 +284,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.7';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.8';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -1253,8 +1253,7 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
     if (!(await ask('해당 일정을 삭제하시겠습니까?', { sub: n ? `배정된 팀원 ${n}명의 일정표에서도 함께 사라집니다.` : '', skipKey: SKIP_DEL }))) return;
     try { await store.remove(e.id); closeSheet(); toast('삭제했습니다.'); refresh(); } catch (er) { toast(errText(er)); }
   } }, '삭제');
-  const t = today(), toStart = dayCount(t, e.start_date) - 1;
-  const when = t > e.end_date ? '종료된 일정' : t >= e.start_date ? (e.start_date === e.end_date ? '오늘' : `진행 중 · ${dayCount(t, e.end_date)}일 남음`) : toStart === 1 ? '내일 시작' : `${toStart}일 뒤 시작`;
+  const t = today();
   const assigned = e.members.length > 0, kk = cli(e.client_id), er = e.roles || {};
   // 배정 일정이면 그 일정에서의 역할, 개인 일정이면 프로필 직급을 이름 옆에 표시
   const who = whoOf(e).map(id => { const q = S.pmap[id] || { name: '?', title: '' }; return { name: q.name, left: !!q.left_at, tag: assigned ? (er[id] || '') : (q.title || '') }; })
@@ -1266,8 +1265,7 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
       h('h2', { class: 'dtitle' }, kk && h('span', { class: 'badge kb fill c-' + kk.color }, kk.name), e.title),
       kk && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '거래처'), h('button', { class: 'person', onclick: () => openClient(kk.id, () => openDetail(e, back)) }, h('i', { class: 'dot c-' + kk.color }), kk.name, h('small', {}, '일정 모두 보기 ›'))),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '기간'),
-        h('div', { class: 'dbig' }, e.start_date === e.end_date ? md(e.start_date) : `${md(e.start_date)} – ${md(e.end_date)}`),
-        h('div', { class: 'ss' }, [e.start_date === e.end_date ? null : `총 ${dayCount(e.start_date, e.end_date)}일`, when].filter(Boolean).join(' · '))),
+        h('div', { class: 'dbig' }, e.start_date === e.end_date ? md(e.start_date) : `${md(e.start_date)} – ${md(e.end_date)}`)),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, assigned ? `참여 팀원 ${who.length}명` : '담당'),
         h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, (p.tag || p.left) && h('small', {}, [p.tag, p.left && '퇴사'].filter(Boolean).join(' · ')))))),
       assigned && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '배정한 사람'), h('div', {}, nameOf(e.owner_id) + ' (관리자)')),
