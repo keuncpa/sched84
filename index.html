@@ -284,7 +284,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.8';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.9';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -543,7 +543,26 @@ const canEdit = e => e.owner_id === S.user.id || (S.me.is_admin && e.members && 
 const canDelete = e => e.owner_id === S.user.id || S.me.is_admin;
 
 /* ---------- 시작 ---------- */
+/* ---------- 화면 모드 (기기별 선택: 시스템 설정 따름 / 밝게 / 어둡게) ----------
+   스타일의 어두운 화면 규칙은 모두 @media (prefers-color-scheme:dark) 로 쓰여 있음.
+   '밝게'·'어둡게'를 고르면 그 조건을 항상 거짓/항상 참으로 바꿔 끼워서 폰 설정과 상관없이 고정함. */
+const THEME_KEY = 'sched84-theme', themeRules = [];
+function applyTheme() {
+  const mode = LS.get(THEME_KEY) || 'auto';
+  if (!themeRules.length) for (const sheet of document.styleSheets) { let rules; try { rules = sheet.cssRules; } catch (e) { continue; } for (const r of rules) if (r.media && /prefers-color-scheme:\s*dark/.test(r.media.mediaText)) themeRules.push(r); }
+  for (const r of themeRules) r.media.mediaText = mode === 'dark' ? 'all' : mode === 'light' ? 'not all' : '(prefers-color-scheme: dark)';
+  const dark = mode === 'dark' || (mode === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';   // 날짜 선택기·스크롤바 같은 기본 부품도 같은 모드로
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m, i) => { m.removeAttribute('media'); m.content = dark ? '#1c1c1e' : '#ffffff'; });
+}
+function themeCard() {
+  const cur = LS.get(THEME_KEY) || 'auto';
+  return h('div', { class: 'card pad' }, h('div', { class: 'mode', id: 'theme', style: 'margin:0' },
+    [['auto', '시스템 설정'], ['light', '밝게'], ['dark', '어둡게']].map(([v, l]) => h('button', { class: cur === v ? 'on' : '', onclick: () => { LS.set(THEME_KEY, v); applyTheme(); viewSet(); } }, l))));
+}
+try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme()); } catch (e) { /* 구형 브라우저 */ }
 async function boot() {
+  applyTheme();
   try {
     if (DEMO) store = demoStore();
     else {
@@ -969,6 +988,7 @@ function viewSet() {
   const members = actives.map(row);
   elMain.replaceChildren(...[
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
+    h('h2', {}, '화면 모드'), themeCard(),
     h('h2', {}, '엑셀로 내려받기'), exportCard(),
     h('h2', {}, '일정 삭제'), delAskCard(),
     h('h2', {}, `구성원 (${actives.length}명)`), h('div', { class: 'card list', id: 'members' }, members),
