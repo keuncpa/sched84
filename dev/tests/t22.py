@@ -8,7 +8,7 @@ async def main():
         await pg.goto('http://localhost:8771/index.html'); await pg.wait_for_selector('.grid')
         await pg.click('.tabs button:nth-child(4)'); await pg.wait_for_selector('text=거래처 관리')
         for nm, col in [('한주에이알티','s120'),('엘비세미콘','s20')]:
-            await pg.click('button:has-text("+ 거래처 추가")'); await pg.wait_for_selector('.sw.many'); await pg.fill('.sheet input[type=text]', nm); await pg.click(f'.sw.many button.c-{col}'); await pg.click('.sheet button[type=submit]'); await pg.wait_for_timeout(350)
+            await pg.click('button:has-text("+ 추가")'); await pg.wait_for_selector('.sw.many'); await pg.fill('.sheet input[type=text]', nm); await pg.click(f'.sw.many button.c-{col}'); await pg.click('.sheet button[type=submit]'); await pg.wait_for_timeout(350)
         await pg.click('.tabs button:nth-child(1)'); await pg.wait_for_selector('.grid')
         for title, cl in [('내부회계','한주에이알티'),('재고실사','엘비세미콘')]:
             await pg.click('.fab'); await pg.wait_for_selector('.sheet form'); await pg.fill('.sheet input[type=text]', title); await pg.select_option('select.inp', label=cl); await pg.click('.sheet button[type=submit]'); await pg.wait_for_timeout(3600)

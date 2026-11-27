@@ -37,7 +37,7 @@
 | `version.json` | 현재 배포 버전. 앱이 이 값을 보고 스스로 새로고침 |
 | `manifest.webmanifest`, `icons/` | 홈 화면 설치용 |
 | `supabase.js` | supabase-js 라이브러리를 그대로 넣어 둔 것(수정하지 않음) |
-| `schema.sql`, `schema_v2.sql` … `schema_v8.sql` | 서버 테이블·권한 규칙. **번호 순서대로** 한 번씩 실행 |
+| `schema.sql`, `schema_v2.sql` … `schema_v9.sql` | 서버 테이블·권한 규칙. **번호 순서대로** 한 번씩 실행 |
 | `server/notify.ts` | 배정 알림을 보내는 Edge Function(`notify`) 원본 |
 | `dev/tests/` | 개발 중에 쓴 화면 자동 점검 스크립트(참고용) |
 | `설치가이드.md` | 서버 만들기부터 운영까지의 안내 |
@@ -115,7 +115,7 @@ python3 -m http.server 8000      # http://localhost:8000 으로 열기
 
 ## 지금 상태 (2026-11-27 기준)
 
-- 배포 버전 `2026-11-27.10`, 서버에는 `schema.sql`부터 `schema_v8.sql`까지 적용됨
+- 배포 버전 `2026-11-27.13`, 서버에는 `schema.sql`부터 `schema_v9.sql`까지 적용됨
 - 기존 엑셀 일정표의 2024년 4분기 ~ 2027년 1분기 일정을 옮겨 넣음(`events.source = 'excel-2611'`). 옮길 때 쓴 SQL과 되돌리기 SQL은 이름이 들어 있어 저장소에는 두지 않음
 - 실제 기기에서 확인된 것: 가입·승인, 일정 추가, 팀원 배정, 배정 알림, PC에서 엑셀 내려받기, 구성원 순서 바꾸기
 - 실제 기기에서 아직 확인하지 못한 것: 폰에서 엑셀 저장·공유, 달력 좌우 밀기 감도, 아이폰 날짜 입력 칸 모양

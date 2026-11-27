@@ -263,6 +263,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 .pick button.all{background:none;box-shadow:inset 0 0 0 .5px var(--sub)}
 .roles{border:0;background:var(--fillc)}.roles>div{border-bottom:.5px solid var(--line)}.roles select{border:0;background:var(--card)}
 .ord{border:0;background:var(--fillc)}
+.kbox{max-height:292px;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:.5px solid var(--line)}.kbox .item{width:100%;background:none;border:0;text-align:left;font:inherit;color:inherit;padding:9px 14px}.kbox .item .tt{font-size:15px;font-weight:500}
 .ordpair{display:inline-flex;gap:4px;margin-left:2px}.ord.xs{width:28px;height:28px;border-radius:14px;font-size:10px}
 .team tr.me .who{color:var(--brand);box-shadow:inset 3px 0 0 var(--brand)}
 .sw button.on{outline:2.5px solid var(--brand)}
@@ -284,7 +285,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.11';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.13';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -400,10 +401,12 @@ function supaStore(sb) {
     async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname.replace(/index\.html$/, '') })); },
     async setPassword(pw) { ok(await sb.auth.updateUser({ password: pw })); },
     async profiles() {
-      const r = await sb.from('profiles').select('id,name,title,approved,is_admin,left_at,sort,pending').order('name');
+      const r = await sb.from('profiles').select('id,name,title,approved,is_admin,left_at,sort,pending,hidden').order('name');
       return r.error ? ok(await sb.from('profiles').select('id,name,title,approved,is_admin,left_at').order('name')) : r.data;   // 순서 칸(v7)이 아직 없는 서버에서도 동작
     },
     // 이름만 먼저 등록해 둔 자리(pending)의 일정을 실제 가입 계정으로 넘김
+    // 퇴사자를 설정 목록에서 지움(줄은 남겨서 과거 일정의 이름은 유지)
+    async hideLeaver(id) { const d = ok(await sb.from('profiles').update({ hidden: true }).eq('id', id).select('id,hidden')); if (!d || !d.length || !d[0].hidden) throw new Error('permission denied'); },
     async linkMember(from, to) { const r = await sb.rpc('link_member', { p_from: from, p_to: to }); if (r.error) throw r.error; },
     async setOrder(list) { await Promise.all(list.map(async ([id, sort]) => { const d = ok(await sb.from('profiles').update({ sort }).eq('id', id).select('id,sort')); if (!d || !d.length || d[0].sort !== sort) throw new Error('permission denied'); })); },
     async clients() { return ok(await sb.from('clients').select('id,name,color,active').order('name')); },
@@ -486,6 +489,7 @@ function demoStore() {
     async session() { return { id: 'me' }; },
     async signIn() {}, async signUp() { return true; }, async resetRequest() {}, async setPassword() {}, async signOut() { try { localStorage.removeItem(KEY); } catch (e) {} },
     async profiles() { return cp(db.profiles); },
+    async hideLeaver(id) { db.profiles.find(p => p.id === id).hidden = true; persist(); },
     async linkMember(from, to) {
       const f = db.profiles.find(p => p.id === from), t = db.profiles.find(p => p.id === to);
       for (const e of db.events) { if (e.owner_id === from) e.owner_id = to; if (e.members.includes(from)) { e.members = [...new Set(e.members.map(u => u === from ? to : u))]; if (e.roles && e.roles[from]) { e.roles[to] = e.roles[to] || e.roles[from]; delete e.roles[from]; } } }
@@ -992,6 +996,10 @@ function viewSet() {
     if (!(await ask(`가입한 "${p.name}" 님을 미리 등록해 둔 "${from.name}"와 연결하시겠습니까?`, { sub: `"${from.name}" 이름으로 들어 있던 일정이 이 계정으로 넘어가고, 바로 승인됩니다. 되돌릴 수 없습니다.` }))) return;
     act(() => store.linkMember(from.id, p.id));
   } }, h('option', { value: '' }, '기존 이름과 연결'), waiting.map(w => h('option', { value: w.id }, w.name)));
+  const removeLeaver = p => async () => {
+    if (!(await ask(`퇴사자 "${p.name}" 님을 목록에서 삭제하시겠습니까?`, { sub: '이 사람이 들어 있던 과거 일정과 이름 표시는 그대로 남습니다. 다시 근무하게 되면 새로 가입하면 됩니다.' }))) return;
+    act(() => store.hideLeaver(p.id));
+  };
   const row = p => h('div', { class: 'item', style: 'align-items:center' },
     h('span', { style: 'flex:1' }, h('div', { class: 'tt' }, p.name, p.is_admin && h('span', { class: 'badge t-field' }, '관리자'), p.left_at ? h('span', { class: 'badge fill c-gray' }, '퇴사') : p.pending ? h('span', { class: 'badge fill c-gray' }, '미가입') : !p.approved && h('span', { class: 'badge t-deadline' }, '승인 대기')), h('div', { class: 'ss' }, p.title || '')),
     S.me.is_admin && h('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
@@ -999,10 +1007,10 @@ function viewSet() {
       p.approved && !p.is_admin && h('button', { class: 'btn sm ghost', onclick: leave(p) }, '퇴사 처리'),   // 관리자는 퇴사 처리 버튼 없음(먼저 관리자 해제)
       !p.approved && !p.left_at && waiting.length > 0 && linkSelect(p),
       !p.approved && !p.left_at && h('button', { class: 'btn sm', onclick: () => act(() => store.setApproved(p.id, true)) }, '승인'),
-      p.left_at && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setLeft(p.id, false)) }, '복귀'),
+      p.left_at && h('button', { class: 'btn sm ghost', 'aria-label': `${p.name} 삭제`, onclick: removeLeaver(p) }, '삭제'),
       arrows(p)));
   const byName = (a, b) => a.approved - b.approved || bySeniority(a, b);   // 승인 대기가 맨 위, 그 아래는 서열순
-  const actives = S.profiles.filter(p => !p.left_at).sort(byName), lefts = S.profiles.filter(p => p.left_at).sort(byName);
+  const actives = S.profiles.filter(p => !p.left_at).sort(byName), lefts = S.profiles.filter(p => p.left_at && !p.hidden).sort((a, b) => (a.left_at < b.left_at ? 1 : -1));   // 최근 퇴사자가 위로
   const members = actives.map(row);
   elMain.replaceChildren(...[
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
@@ -1010,7 +1018,7 @@ function viewSet() {
     h('h2', {}, '엑셀로 내려받기'), exportCard(),
     h('h2', {}, '일정 삭제'), delAskCard(),
     h('h2', {}, `구성원 (${actives.length}명)`), h('div', { class: 'card list', id: 'members' }, members),
-    lefts.length > 0 && h('h2', {}, `퇴사자 (${lefts.length}명)`), lefts.length > 0 && h('div', { class: 'card list' }, lefts.map(row)),
+    lefts.length > 0 && h('h2', {}, `퇴사자 (${lefts.length}명)`), lefts.length > 0 && h('div', { class: 'card' }, h('div', { class: 'kbox', id: 'leftbox', style: 'border-top:0' }, lefts.map(row))),
     S.me.is_admin && h('h2', {}, `거래처 관리 (관리자) · ${CLIENTS.length}곳`), S.me.is_admin && clientCard(),
     S.me.is_admin && h('h2', {}, '일정 유형 관리 (관리자)'), S.me.is_admin && catCard(),
     !DEMO && h('h2', {}, '배정 알림'), !DEMO && pushCard(),
@@ -1177,12 +1185,26 @@ function deliverFile(blob, name) {
 }
 
 /* ---------- 거래처 관리 (관리자) ---------- */
+// 거래처 관리: 거래처가 많아도 화면을 다 차지하지 않게 — 검색 칸 + 높이가 정해진 목록(안에서 스크롤), 숨긴 거래처는 접어 둠
+let clientQ = '', clientShowHidden = false;
 function clientCard() {
-  return h('div', { class: 'card list' },
-    CLIENTS.map(c => h('button', { class: 'item', onclick: () => openClientEdit(c) },
-      h('span', { style: 'flex:1;min-width:0' }, h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.name, !c.active && h('span', { class: 'badge t-deadline' }, '숨김'))))),
-    !CLIENTS.length && h('div', { class: 'empty' }, '등록된 거래처가 없습니다. 거래처를 등록하면 일정마다 거래처를 지정하고 거래처별로 모아 볼 수 있습니다.'),
-    h('div', { class: 'pad' }, h('button', { class: 'btn ghost', style: 'width:100%', onclick: () => openClientEdit({ name: '', color: KCOLORS.find(k => !CLIENTS.some(x => x.color === k)) || KCOLORS[CLIENTS.length % KCOLORS.length], active: true }) }, '+ 거래처 추가')));
+  const box = h('div', { class: 'kbox', id: 'kbox' });
+  const hiddenN = CLIENTS.filter(c => !c.active).length;
+  const tog = hiddenN > 0 && h('button', { class: 'link', style: 'padding:10px 14px', onclick: () => { clientShowHidden = !clientShowHidden; draw(); } });
+  const draw = () => {
+    const q = clientQ.trim().toLowerCase();
+    const list = CLIENTS.filter(c => (q ? c.name.toLowerCase().includes(q) : (c.active || clientShowHidden)));   // 검색할 때는 숨긴 거래처도 함께 찾음
+    box.replaceChildren(...list.map(c => h('button', { class: 'item', onclick: () => openClientEdit(c) },
+      h('span', { style: 'flex:1;min-width:0' }, h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.name, !c.active && h('span', { class: 'badge fill c-gray' }, '숨김'))))),
+      ...(list.length ? [] : [h('div', { class: 'empty' }, CLIENTS.length ? '찾는 거래처가 없습니다.' : '등록된 거래처가 없습니다.')]));
+    if (tog) tog.textContent = clientShowHidden ? '숨긴 거래처 접기' : `숨긴 거래처 ${hiddenN}곳 보기`;
+  };
+  const search = h('input', { type: 'text', value: clientQ, placeholder: `거래처 검색 (전체 ${CLIENTS.length}곳)`, 'aria-label': '거래처 검색', oninput: ev => { clientQ = ev.target.value; draw(); } });
+  draw();
+  return h('div', { class: 'card' },
+    h('div', { class: 'pad', style: 'display:flex;gap:8px;padding-bottom:8px' }, CLIENTS.length > 6 ? search : h('span', { style: 'flex:1' }),
+      h('button', { class: 'btn ghost', style: 'flex:none;padding:10px 14px', onclick: () => openClientEdit({ name: '', color: KCOLORS.find(k => !CLIENTS.some(x => x.color === k)) || KCOLORS[CLIENTS.length % KCOLORS.length], active: true }) }, '+ 추가')),
+    box, tog);
 }
 function openClientEdit(init) {
   const c = { ...init };
