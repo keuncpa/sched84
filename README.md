@@ -71,7 +71,7 @@ python3 -m http.server 8000      # http://localhost:8000 으로 열기
 
 1. `index.html`을 고칩니다.
 2. **세 군데의 버전을 함께 올립니다.** 하나라도 빠지면 폰에 예전 화면이 남습니다.
-   - `index.html`의 `APP_VERSION` (예: `2026-11-27.8` → `.9`)
+   - `index.html`의 `APP_VERSION` — 형식은 `날짜.그날 몇 번째 배포.누적 배포 횟수` (예: `2026-11-27.15.40` → `2026-11-27.16.41`). 누적 횟수는 `git rev-list --count HEAD`에 1을 더한 값(이번 커밋이 몇 번째인지)
    - `version.json`의 `v` (위와 같은 값)
    - `sw.js` 맨 위 캐시 이름 `sched84-vN`의 숫자
 3. `git commit` 후 `git push origin main`.
@@ -115,7 +115,7 @@ python3 -m http.server 8000      # http://localhost:8000 으로 열기
 
 ## 지금 상태 (2026-11-27 기준)
 
-- 배포 버전 `2026-11-27.13`, 서버에는 `schema.sql`부터 `schema_v9.sql`까지 적용됨
+- 배포 버전은 앱 [설정] 맨 아래와 `version.json` 참고, 서버에는 `schema.sql`부터 `schema_v9.sql`까지 적용됨
 - 기존 엑셀 일정표의 2024년 4분기 ~ 2027년 1분기 일정을 옮겨 넣음(`events.source = 'excel-2611'`). 옮길 때 쓴 SQL과 되돌리기 SQL은 이름이 들어 있어 저장소에는 두지 않음
 - 실제 기기에서 확인된 것: 가입·승인, 일정 추가, 팀원 배정, 배정 알림, PC에서 엑셀 내려받기, 구성원 순서 바꾸기
 - 실제 기기에서 아직 확인하지 못한 것: 폰에서 엑셀 저장·공유, 달력 좌우 밀기 감도, 아이폰 날짜 입력 칸 모양
