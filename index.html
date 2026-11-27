@@ -262,6 +262,8 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 .seg button{border:0;background:var(--fillc);border-radius:10px}
 .quick button,.pick button{border:0;background:var(--fillc)}
 .pick button.all{background:none;box-shadow:inset 0 0 0 .5px var(--sub)}
+.roles>div.rrow{display:block;padding:7px 10px 7px 12px}.roles .r1{display:flex;align-items:center;gap:8px}.roles .r2{display:flex;align-items:center;gap:6px;margin-top:6px}.roles .r2 input{flex:1;min-width:0;padding:7px 8px;font-size:14px;background:var(--card)}.roles .r2 i{font-style:normal;color:var(--sub)}
+.spbtn{flex:none;border:0;background:var(--card);border-radius:8px;padding:6px 9px;font-size:13px;color:var(--sub);min-height:36px}.spbtn.on{color:var(--brand)}
 .roles{border:0;background:var(--fillc)}.roles>div{border-bottom:.5px solid var(--line)}.roles select{border:0;background:var(--card)}
 .ord{border:0;background:var(--fillc)}
 .kbox{max-height:292px;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:.5px solid var(--line)}.kbox .item{width:100%;background:none;border:0;text-align:left;font:inherit;color:inherit;padding:9px 14px}.kbox .item .tt{font-size:15px;font-weight:500}
@@ -287,7 +289,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-28.2.43';   // 날짜.그날 몇 번째 배포.처음부터 누적 배포 횟수 — version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-28.3.44';   // 날짜.그날 몇 번째 배포.처음부터 누적 배포 횟수 — version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -393,8 +395,9 @@ const authStorage = {
 /* ---------- 저장소: 실제 서버(Supabase) ---------- */
 function supaStore(sb) {
   const ok = ({ data, error }) => { if (error) throw error; return data; };
-  const cols = 'id,owner_id,type,title,start_date,end_date,memo,client_id,source,event_members(user_id,role)';
-  const norm = rows => rows.map(({ event_members, ...e }) => ({ ...e, members: (event_members || []).map(m => m.user_id), roles: Object.fromEntries((event_members || []).filter(m => m.role).map(m => [m.user_id, m.role])) }));
+  const cols = 'id,owner_id,type,title,start_date,end_date,memo,client_id,source,event_members(user_id,role,start_date,end_date)';
+  const norm = rows => rows.map(({ event_members, ...e }) => ({ ...e, members: (event_members || []).map(m => m.user_id), roles: Object.fromEntries((event_members || []).filter(m => m.role).map(m => [m.user_id, m.role])),
+    spans: Object.fromEntries((event_members || []).filter(m => m.start_date || m.end_date).map(m => [m.user_id, [m.start_date, m.end_date]])) }));   // spans: 일정 전체 기간과 다르게 투입되는 사람만
   return {
     async session() { const { data } = await sb.auth.getSession(); return data.session ? data.session.user : null; },
     async signIn(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
@@ -446,10 +449,11 @@ function supaStore(sb) {
       if (!data || !data.length) throw new Error('permission denied');
       return data[0].id;
     },
-    async setMembers(id, add, del, roles = {}, changed = []) {   // changed: 계속 배정돼 있으면서 역할만 바뀐 사람
+    async setMembers(id, add, del, roles = {}, changed = [], spans = {}) {   // changed: 계속 배정돼 있으면서 역할이나 투입 기간이 바뀐 사람
+      const sp = u => ({ start_date: (spans[u] || [])[0] || null, end_date: (spans[u] || [])[1] || null });
       if (del.length) ok(await sb.from('event_members').delete().eq('event_id', id).in('user_id', del));
-      if (add.length) ok(await sb.from('event_members').insert(add.map(u => ({ event_id: id, user_id: u, role: roles[u] || null }))));
-      for (const u of changed) ok(await sb.from('event_members').update({ role: roles[u] || null }).eq('event_id', id).eq('user_id', u));
+      if (add.length) ok(await sb.from('event_members').insert(add.map(u => ({ event_id: id, user_id: u, role: roles[u] || null, ...sp(u) }))));
+      for (const u of changed) ok(await sb.from('event_members').update({ role: roles[u] || null, ...sp(u) }).eq('event_id', id).eq('user_id', u));
     },
     async notify(id, users, kind) { const { data, error } = await sb.functions.invoke('notify', { body: { event_id: id, user_ids: users, kind } }); if (error) throw error; return data; },
     async registerPush(endpoint, p256dh, auth) { ok(await sb.rpc('register_push', { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth })); },
@@ -520,9 +524,11 @@ function demoStore() {
       else { ev = { ...ev, id: 'e' + Date.now(), members: [], roles: {} }; db.events.push(ev); }
       persist(); return ev.id;
     },
-    async setMembers(id, add, del, roles = {}, changed = []) {
+    async setMembers(id, add, del, roles = {}, changed = [], spans = {}) {
       const e = db.events.find(x => x.id === id); e.members = e.members.filter(u => !del.includes(u)).concat(add);
-      e.roles = Object.fromEntries(e.members.map(u => [u, add.includes(u) || changed.includes(u) ? roles[u] : (e.roles || {})[u]]).filter(([, r]) => r)); persist();
+      const fresh = u => add.includes(u) || changed.includes(u);
+      e.roles = Object.fromEntries(e.members.map(u => [u, fresh(u) ? roles[u] : (e.roles || {})[u]]).filter(([, r]) => r));
+      e.spans = Object.fromEntries(e.members.map(u => [u, fresh(u) ? spans[u] : (e.spans || {})[u]]).filter(([, r]) => r && (r[0] || r[1]))); persist();
     },
     async notify(id, users) { return { sent: 0, failed: 0, devices: 0, demo: users.length }; },
     async registerPush() {}, async unregisterPush() {},
@@ -551,11 +557,15 @@ const nameOf = id => (S.pmap[id] && S.pmap[id].name) || '?';
 const bySeniority = (a, b) => (a.sort ?? 100000) - (b.sort ?? 100000) || a.name.localeCompare(b.name, 'ko');
 const whoOf = e => (e.members && e.members.length) ? e.members : [e.owner_id];   // 배정이 있으면 배정된 사람들, 없으면 작성자
 const isMine = e => whoOf(e).includes(S.user.id);
-const names = (e, max = 3) => { const n = whoOf(e).map(id => S.pmap[id] || { name: nameOf(id) }).map(q => ({ name: q.name, sort: q.left_at ? 1e6 : q.sort })).sort(bySeniority).map(q => q.name); return n.length > max ? `${n.slice(0, max).join(', ')} 외 ${n.length - max}명` : n.join(', '); };
+// 한 일정 안에서 그 사람이 실제 투입되는 기간. 따로 정하지 않았으면 일정 전체 기간 (일정 기간 밖으로 나간 값은 잘라 냄)
+const spanOf = (e, uid) => { const sp = (e.spans || {})[uid]; if (!sp) return [e.start_date, e.end_date]; const a = sp[0] && sp[0] > e.start_date ? sp[0] : e.start_date, b = sp[1] && sp[1] < e.end_date ? sp[1] : e.end_date; return a <= b ? [a, b] : [e.start_date, e.end_date]; };
+const inSpan = (e, uid, d) => { const [a, b] = spanOf(e, uid); return a <= d && d <= b; };
+const whoOn = (e, d) => whoOf(e).filter(u => inSpan(e, u, d));   // 그날 실제로 투입되는 사람
+const names = (e, max = 3, day = null) => { const n = (day ? whoOn(e, day) : whoOf(e)).map(id => S.pmap[id] || { name: nameOf(id) }).map(q => ({ name: q.name, sort: q.left_at ? 1e6 : q.sort })).sort(bySeniority).map(q => q.name); return n.length > max ? `${n.slice(0, max).join(', ')} 외 ${n.length - max}명` : n.join(', '); };
 const visible = e => !S.hide.has(e.type) && (!S.onlyMine || isMine(e)) && (!S.client || e.client_id === S.client);
 // 칩·막대 색: 기본은 거래처 색(거래처가 없는 일정은 유형 색). '색: 유형'으로 바꾸면 전부 유형 색.
 const ec = e => { const k = S.colorBy === 'client' ? cli(e.client_id) : null; return k ? 'fill c-' + k.color : cc(e.type); };
-const onDay = d => S.events.filter(e => e.start_date <= d && e.end_date >= d && visible(e))
+const onDay = d => S.events.filter(e => e.start_date <= d && e.end_date >= d && visible(e) && (!S.onlyMine || inSpan(e, S.user.id, d)))
   .sort((a, b) => (cat(b.type).shared - cat(a.type).shared) || (cat(a.type).sort - cat(b.type).sort) || (a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : 0));
 const canEdit = e => e.owner_id === S.user.id || (S.me.is_admin && e.members && e.members.length > 0);
 const canDelete = e => e.owner_id === S.user.id || S.me.is_admin;
@@ -904,12 +914,12 @@ const calChipKids = e => {
 // (한 업무라도 사람마다 기간이 다르면 일정이 여러 개로 등록되는데, 달력 칸에서는 같은 글자가 여러 번 나올 필요가 없음)
 const uniqEvents = list => { const seen = new Set(); return list.filter(e => { const k = (e.client_id || e.type) + '|' + e.title; if (seen.has(k)) return false; seen.add(k); return true; }); };
 const chipText = e => { if (cat(e.type).shared) return e.title; const p = whoOf(e); return `${nameOf(p.includes(S.user.id) ? S.user.id : p[0])}${p.length > 1 ? '+' + (p.length - 1) : ''} ${e.title}`; };
-function eventItem(e, showWho = true, back = null) {
+function eventItem(e, showWho = true, back = null, { day = null, uid = null } = {}) {   // day: 그날 투입되는 사람만 이름에 / uid: 그 사람의 투입 기간으로 표시
   return h('button', { class: 'item', onclick: () => openDetail(e, back) },
     h('span', { class: 'bar ' + ec(e) }),
     h('span', { style: 'min-width:0' }, h('div', { class: 'tt' }, cli(e.client_id) && h('span', { class: 'badge kb fill c-' + cli(e.client_id).color }, cli(e.client_id).name), e.title),
       h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label)),
-      h('div', { class: 'ss' }, [showWho && names(e), range(e.start_date, e.end_date)].filter(Boolean).join(' · '))));
+      h('div', { class: 'ss' }, [showWho && names(e, 3, day), range(...(uid ? spanOf(e, uid) : [e.start_date, e.end_date]))].filter(Boolean).join(' · '))));
 }
 
 /* ---------- 달력 ---------- */
@@ -954,7 +964,7 @@ function viewTeam() {
     const deptRow = h('tr', {}, h('td', { class: 'who' }, '부서 공통'), days.map(d => h('td', { class: d === t ? 'tod' : '' }, cellChips(onDay(d).filter(e => cat(e.type).shared)))));
     body = [deptRow, ...people.map(p => h('tr', { class: p.id === S.user.id ? 'me' : '' }, h('td', { class: 'who' }, p.name, (p.title || !p.approved) && h('small', {}, p.approved ? p.title : (p.left_at ? '퇴사' : '미승인'))),
       days.map(d => { const mine = p.id === S.user.id; return h('td', { class: (d === t ? 'tod ' : '') + (mine ? 'mine' : ''), onclick: mine ? () => openForm({ start_date: d }) : null },
-        cellChips(onDay(d).filter(e => !cat(e.type).shared && whoOf(e).includes(p.id)))); })))];
+        cellChips(onDay(d).filter(e => !cat(e.type).shared && whoOf(e).includes(p.id) && inSpan(e, p.id, d)))); })))];
   }
   const mode = CLIENTS.length > 0 && h('div', { class: 'mode' },
     h('button', { class: byClient ? '' : 'on', onclick: () => { S.teamBy = 'people'; viewTeam(); } }, '팀원별'),
@@ -990,7 +1000,7 @@ async function openClient(id, back = null) {
 /* ---------- 내 일정 ---------- */
 function viewMine() {
   elMain.replaceChildren(h('h2', {}, '내 일정 (최근 1주 ~ 예정)'),
-    h('div', { class: 'card list' }, S.mine.length ? S.mine.map(e => eventItem(e, false)) : h('div', { class: 'empty' }, firstLoad ? '불러오는 중…' : '내 일정이 없습니다. 오른쪽 아래 + 버튼으로 추가하세요.')));
+    h('div', { class: 'card list' }, S.mine.length ? S.mine.map(e => eventItem(e, false, null, { uid: S.user.id })) : h('div', { class: 'empty' }, firstLoad ? '불러오는 중…' : '내 일정이 없습니다. 오른쪽 아래 + 버튼으로 추가하세요.')));
 }
 
 /* ---------- 설정 ---------- */
@@ -1179,7 +1189,7 @@ const XL = (() => {
       put(r, 1, '', {}); grid(r); sh.heights[r] = 10.5; r++;
       // 사람별 줄 (같은 날 일정이 겹치면 줄을 늘림)
       for (const p of people) {
-        const mine = lanes(evs.filter(e => !cat(e.type).shared && whoOf(e).includes(p.id))), pn = Math.max(1, mine.length);
+        const mine = lanes(evs.filter(e => !cat(e.type).shared && whoOf(e).includes(p.id)).map(e => { const [a, b] = spanOf(e, p.id); return { ...e, start_date: a, end_date: b }; }).filter(e => e.start_date <= mb && e.end_date >= ma)), pn = Math.max(1, mine.length);   // 사람 줄은 그 사람이 실제 투입되는 날만
         for (let i = 0; i < pn; i++) { put(r + i, 1, i ? '' : p.name, {}); grid(r + i); (mine[i] || []).forEach(e => bar(r + i, e, label(e) + (cli(e.client_id) && (e.roles || {})[p.id] === '인차지' ? ' (인차지)' : ''))); }
         merge(r, 1, r + pn - 1, 1); r += pn;
       }
@@ -1350,7 +1360,7 @@ function closeSheet() { const o = document.getElementById('ov'); if (o) o.remove
 function openDay(d) {
   const evs = onDay(d), back = () => openDay(d);
   sheetAt('mid', h('h3', {}, `${md(d)} 일정`),
-    h('div', { class: 'card list' }, evs.length ? evs.map(e => eventItem(e, true, back)) : h('div', { class: 'empty' }, '등록된 일정이 없습니다.')),
+    h('div', { class: 'card list' }, evs.length ? evs.map(e => eventItem(e, true, back, { day: d })) : h('div', { class: 'empty' }, '등록된 일정이 없습니다.')),
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기'), h('button', { class: 'btn', onclick: () => openForm({ start_date: d }) }, '+ 일정 추가')));
 }
 function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표시
@@ -1362,7 +1372,7 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
   const t = today();
   const assigned = e.members.length > 0, kk = cli(e.client_id), er = e.roles || {};
   // 배정 일정이면 그 일정에서의 역할, 개인 일정이면 프로필 직급을 이름 옆에 표시
-  const who = whoOf(e).map(id => { const q = S.pmap[id] || { name: '?', title: '' }; return { name: q.name, sort: q.left_at ? 1e6 : q.sort, left: !!q.left_at, tag: assigned ? (er[id] || '') : (q.title || '') }; })
+  const who = whoOf(e).map(id => { const q = S.pmap[id] || { name: '?', title: '' }; const sp = spanOf(e, id); return { name: q.name, sort: q.left_at ? 1e6 : q.sort, left: !!q.left_at, tag: assigned ? (er[id] || '') : (q.title || ''), when: (sp[0] !== e.start_date || sp[1] !== e.end_date) ? (sp[0] === sp[1] ? md(sp[0]) : `${md(sp[0])} – ${md(sp[1])}`) : '' }; })
     .sort(bySeniority);   // 설정의 구성원 순서(서열)대로, 퇴사자는 뒤로
   sheetAt('full',
     h('div', { class: 'dtop' }, h('button', { class: 'btn ghost sm', onclick: back || closeSheet }, back ? '‹ 목록으로' : '‹ 닫기')),
@@ -1373,7 +1383,7 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '기간'),
         h('div', { class: 'dbig' }, e.start_date === e.end_date ? md(e.start_date) : `${md(e.start_date)} – ${md(e.end_date)}`)),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, assigned ? `참여 팀원 ${who.length}명` : '담당'),
-        h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, (p.tag || p.left) && h('small', {}, [p.tag, p.left && '퇴사'].filter(Boolean).join(' · ')))))),
+        h('div', { class: 'dwho' }, who.map(p => h('span', { class: 'person' }, p.name, (p.tag || p.left || p.when) && h('small', {}, [p.tag, p.left && '퇴사', p.when].filter(Boolean).join(' · ')))))),
       assigned && !e.source && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '배정한 사람'), h('div', {}, nameOf(e.owner_id) + ' (관리자)')),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '메모'), e.memo ? h('div', { class: 'memo', style: 'margin-top:0' }, e.memo) : h('div', { class: 'ss' }, '메모 없음')),
       !canEdit(e) && h('p', { class: 'help' }, assigned ? '관리자가 배정한 일정입니다. 변경이 필요하면 관리자에게 요청해 주세요.' : '다른 사람의 일정은 보기만 할 수 있습니다.')),
@@ -1400,6 +1410,9 @@ function openForm(init) {
   // 관리자 전용: 이 일정에 넣을 팀원 선택
   const sel = new Set(ev.members), pick = h('div', { class: 'pick' }), rolesBox = h('div', {});
   const roles = { ...(ev.roles || {}) }, roles0 = { ...(ev.roles || {}) };
+  // 사람별 투입 기간: 값이 없으면 일정 전체 기간. openSpan 은 날짜 칸을 펼쳐 둔 사람
+  const spans = Object.fromEntries(Object.entries(ev.spans || {}).map(([u, v]) => [u, [...v]])), spans0 = JSON.stringify(ev.spans || {}), openSpan = new Set(Object.keys(spans));
+  const spanKey = u => JSON.stringify((spans[u] || []).map(x => x || null));
   const guessRole = p => ROLES.find(r => (p.title || '').includes(r)) || '';   // 프로필 직급에 같은 말이 있으면 그걸 기본값으로
   const team = S.profiles.filter(p => p.approved || sel.has(p.id)).sort((a, b) => (b.approved - a.approved) || bySeniority(a, b));   // 이미 배정돼 있던 퇴사자는 해제할 수 있게 표시
   const drawPick = () => { paintPick(); drawRoles(); };   // 배정 칩과 역할 목록을 함께 다시 그림 (drawRoles 는 바로 아래에서 정의)
@@ -1409,11 +1422,16 @@ function openForm(init) {
   // 고른 사람마다 이 일정에서의 역할을 지정 (비워 둘 수 있음)
   const drawRoles = () => {
     const chosen = team.filter(p => sel.has(p.id));
-    rolesBox.replaceChildren(...(chosen.length ? [h('label', {}, '역할 지정 (선택)'), h('div', { class: 'roles' }, chosen.map(p => {
+    rolesBox.replaceChildren(...(chosen.length ? [h('label', {}, '역할·투입 기간 (선택)'), h('div', { class: 'roles' }, chosen.map(p => {
       const rs = h('select', { 'aria-label': p.name + ' 역할', onchange: () => { roles[p.id] = rs.value; } }, h('option', { value: '' }, '역할 없음'), ROLES.map(r => h('option', { value: r }, r)),
         roles[p.id] && !ROLES.includes(roles[p.id]) && h('option', { value: roles[p.id] }, roles[p.id]));
       rs.value = roles[p.id] || '';
-      return h('div', {}, h('span', {}, p.name + (p.approved ? '' : ' (퇴사)')), rs);
+      // 기간: 기본은 "전체 기간". 누르면 이 사람만의 시작·종료일을 따로 정할 수 있음
+      const on = openSpan.has(p.id), sp = spans[p.id] || [];
+      const tog = h('button', { type: 'button', class: 'spbtn' + (on ? ' on' : ''), 'aria-label': p.name + ' 투입 기간', onclick: () => { if (on) { openSpan.delete(p.id); delete spans[p.id]; } else { openSpan.add(p.id); spans[p.id] = [s.value, e.value]; } drawRoles(); } }, on ? '전체 기간으로' : '전체 기간');
+      const ds = on && h('input', { type: 'date', 'aria-label': p.name + ' 시작일', value: sp[0] || s.value, min: s.value, max: e.value, onchange: () => { spans[p.id] = [ds.value, de.value < ds.value ? ds.value : de.value]; de.value = spans[p.id][1]; } });
+      const de = on && h('input', { type: 'date', 'aria-label': p.name + ' 종료일', value: sp[1] || e.value, min: s.value, max: e.value, onchange: () => { spans[p.id] = [ds.value > de.value ? de.value : ds.value, de.value]; ds.value = spans[p.id][0]; } });
+      return h('div', { class: 'rrow' }, h('div', { class: 'r1' }, h('span', {}, p.name + (p.approved ? '' : ' (퇴사)')), tog, rs), on && h('div', { class: 'r2' }, ds, h('i', {}, '–'), de));
     }))] : []));
   };
   drawPick();
@@ -1429,8 +1447,11 @@ function openForm(init) {
       let jobs = [];
       if (S.me.is_admin) {
         const add = [...sel].filter(u => !before.members.has(u)), del = [...before.members].filter(u => !sel.has(u)), stay = [...sel].filter(u => before.members.has(u));
-        const reroled = stay.filter(u => (roles[u] || '') !== (roles0[u] || ''));
-        if (add.length || del.length || reroled.length) await store.setMembers(id, add, del, roles, reroled);
+        // 투입 기간 정리: 일정 기간 밖은 잘라 내고, 전체 기간과 같으면 "따로 정하지 않음"으로 저장
+        const fin = {}, old = JSON.parse(spans0);
+        for (const u of sel) { const sp = spans[u]; if (!sp) continue; const a = sp[0] && sp[0] > s.value ? sp[0] : s.value, b = sp[1] && sp[1] < e.value ? sp[1] : e.value; if (a <= b && (a !== s.value || b !== e.value)) fin[u] = [a, b]; }
+        const reroled = stay.filter(u => (roles[u] || '') !== (roles0[u] || '') || JSON.stringify(fin[u] || null) !== JSON.stringify(old[u] || null));
+        if (add.length || del.length || reroled.length) await store.setMembers(id, add, del, roles, reroled, fin);
         const changed = ev.id && (before.title !== title.value.trim() || before.start_date !== s.value || before.end_date !== e.value);
         if (add.length) jobs.push(store.notify(id, add, 'assign'));
         if (changed && stay.length) jobs.push(store.notify(id, stay, 'update'));
