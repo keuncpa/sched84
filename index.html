@@ -281,7 +281,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.5';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.6';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -882,14 +882,13 @@ function viewTeam() {
   const head = h('tr', {}, h('th', { class: 'who' }, ''), days.map(d => { const w = parse(d).getDay(); return h('th', { class: (d === t ? 'tod ' : '') + (w === 0 ? 'sun' : w === 6 ? 'sat' : '') }, `${DOW[w]} ${parse(d).getDate()}`); }));
   const chip = (e, text) => h('button', { class: 'chip ' + ec(e), onclick: ev => { ev.stopPropagation(); openDetail(e); } }, text);
   const cellChips = list => list.map(e => chip(e, cli(e.client_id) ? chipKids(e) : e.title));
-  let body, help;
+  let body;
   if (byClient) {
     // 거래처별: 줄 = 거래처, 칸 = 그날 그 거래처의 일정 제목 (누가 가는지는 칩을 누르면 상세에서 확인)
     const ks = CLIENTS.filter(c => c.active || S.events.some(e => e.client_id === c.id));
     body = ks.map(c => h('tr', {}, h('td', { class: 'who k', onclick: () => openClient(c.id) }, h('i', { class: 'dot c-' + c.color }), c.name),
       days.map(d => h('td', { class: d === t ? 'tod' : '' }, onDay(d).filter(e => e.client_id === c.id).map(e => chip(e, e.title.replace(c.name, '').trim() || e.title))))));
     if (!ks.length) body = [h('tr', {}, h('td', { colspan: 8, class: 'empty' }, '등록된 거래처가 없습니다.'))];
-    help = '일정을 누르면 배정 인원을, 거래처 이름을 누르면 그 거래처의 전체 일정을 볼 수 있습니다. 표는 좌우로 밀어서 볼 수 있습니다.';
   } else {
     // 팀원별: 재직자 전원 + (퇴사자라도) 이 주에 일정이 있는 사람
     const busy = new Set(); S.events.forEach(e => { if (!cat(e.type).shared) whoOf(e).forEach(id => busy.add(id)); });
@@ -898,13 +897,11 @@ function viewTeam() {
     body = [deptRow, ...people.map(p => h('tr', { class: p.id === S.user.id ? 'me' : '' }, h('td', { class: 'who' }, p.name, (p.title || !p.approved) && h('small', {}, p.approved ? p.title : (p.left_at ? '퇴사' : '미승인'))),
       days.map(d => { const mine = p.id === S.user.id; return h('td', { class: (d === t ? 'tod ' : '') + (mine ? 'mine' : ''), onclick: mine ? () => openForm({ start_date: d }) : null },
         cellChips(onDay(d).filter(e => !cat(e.type).shared && whoOf(e).includes(p.id)))); })))];
-    help = '내 줄의 빈 칸을 누르면 그 날짜로 일정을 추가합니다. 표는 좌우로 밀어서 볼 수 있습니다.';
   }
   const mode = CLIENTS.length > 0 && h('div', { class: 'mode' },
     h('button', { class: byClient ? '' : 'on', onclick: () => { S.teamBy = 'people'; viewTeam(); } }, '팀원별'),
     h('button', { class: byClient ? 'on' : '', onclick: () => { S.teamBy = 'client'; viewTeam(); } }, '거래처별'));
-  elMain.replaceChildren(...[filterBar(), mode, h('div', { class: 'card twrap' }, h('table', { class: 'team' }, h('thead', {}, head), h('tbody', {}, body))),
-    h('p', { class: 'help pad' }, help)].filter(Boolean));
+  elMain.replaceChildren(...[filterBar(), mode, h('div', { class: 'card twrap' }, h('table', { class: 'team' }, h('thead', {}, head), h('tbody', {}, body)))].filter(Boolean));
 }
 
 /* ---------- 거래처 상세: 그 거래처의 일정과 배정 인원 ---------- */
@@ -972,9 +969,7 @@ function viewSet() {
     h('h2', {}, '엑셀로 내려받기'), exportCard(),
     h('h2', {}, '일정 삭제'), delAskCard(),
     h('h2', {}, `구성원 (${actives.length}명)`), h('div', { class: 'card list', id: 'members' }, members),
-    S.me.is_admin && h('p', { class: 'help pad', style: 'padding-top:6px' }, '▲▼로 순서를 바꾸면 팀 보기, 엑셀, 팀원 배정 목록에 그 순서로 나옵니다. 새로 승인된 사람은 맨 아래에 들어옵니다.'),
     lefts.length > 0 && h('h2', {}, `퇴사자 (${lefts.length}명)`), lefts.length > 0 && h('div', { class: 'card list' }, lefts.map(row)),
-    lefts.length > 0 && h('p', { class: 'help pad', style: 'padding-top:6px' }, '퇴사자가 등록했거나 배정됐던 일정은 지워지지 않고 그대로 남아 있습니다.'),
     S.me.is_admin && h('h2', {}, `거래처 관리 (관리자) · ${CLIENTS.length}곳`), S.me.is_admin && clientCard(),
     S.me.is_admin && h('h2', {}, '일정 유형 관리 (관리자)'), S.me.is_admin && catCard(),
     !DEMO && h('h2', {}, '배정 알림'), !DEMO && pushCard(),
@@ -1124,7 +1119,7 @@ function exportCard() {
     } catch (e) { toast(errText(e)); }
     btn.disabled = false; btn.textContent = '엑셀 내려받기';
   } }, '엑셀 내려받기');
-  return h('div', { class: 'card pad' }, h('p', { class: 'help', style: 'margin:0 0 10px' }, '부서에서 쓰던 엑셀 일정표 양식(월별 표, 거래처 주간업무 + 사람별 줄)으로 내려받습니다.'), h('div', { class: 'row2' }, sel, btn));
+  return h('div', { class: 'card pad' }, h('div', { class: 'row2' }, sel, btn));
 }
 // 파일 건네기: PC는 바로 내려받기. 폰은 "공유·저장" 창을 한 번 더 띄움
 // (폰, 특히 홈 화면에 추가한 아이폰 앱은 바로 내려받기가 안 먹는 경우가 있어서 공유 창으로 [파일에 저장]·카톡·엑셀 앱을 고르게 함)
@@ -1137,7 +1132,6 @@ function deliverFile(blob, name) {
   sheetAt('mid', h('h3', {}, '엑셀 파일이 준비됐습니다'), h('p', { class: 'help', style: 'word-break:break-all' }, name),
     canShare && h('button', { class: 'btn', style: 'width:100%;margin-bottom:8px', onclick: async () => { try { await navigator.share({ files: [file] }); closeSheet(); } catch (e) { if (e && e.name !== 'AbortError') toast('공유 창을 열지 못했습니다. 아래 "바로 내려받기"를 눌러 주세요.'); } } }, '저장·공유하기 (파일에 저장, 카톡, 엑셀 앱)'),
     h('button', { class: 'btn ghost', style: 'width:100%;margin-bottom:8px', onclick: down }, canShare ? '바로 내려받기' : '다시 내려받기'),
-    !canShare && h('p', { class: 'help' }, '내려받은 파일은 폰의 [다운로드] 또는 [파일] 앱에서 확인할 수 있습니다.'),
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기')));
 }
 
@@ -1145,7 +1139,7 @@ function deliverFile(blob, name) {
 function clientCard() {
   return h('div', { class: 'card list' },
     CLIENTS.map(c => h('button', { class: 'item', onclick: () => openClientEdit(c) },
-      h('span', { style: 'flex:1;min-width:0' }, h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.name, !c.active && h('span', { class: 'badge t-deadline' }, '숨김')), h('div', { class: 'ss' }, '눌러서 이름·색 수정')))),
+      h('span', { style: 'flex:1;min-width:0' }, h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.name, !c.active && h('span', { class: 'badge t-deadline' }, '숨김'))))),
     !CLIENTS.length && h('div', { class: 'empty' }, '등록된 거래처가 없습니다. 거래처를 등록하면 일정마다 거래처를 지정하고 거래처별로 모아 볼 수 있습니다.'),
     h('div', { class: 'pad' }, h('button', { class: 'btn ghost', style: 'width:100%', onclick: () => openClientEdit({ name: '', color: KCOLORS.find(k => !CLIENTS.some(x => x.color === k)) || KCOLORS[CLIENTS.length % KCOLORS.length], active: true }) }, '+ 거래처 추가')));
 }
@@ -1173,8 +1167,7 @@ function openClientEdit(init) {
     h('form', { onsubmit: ev => { ev.preventDefault(); save({}); } },
       h('label', {}, '이름'), name, h('label', {}, '색상 (달력에서 "색: 거래처"로 볼 때 쓰는 색 · 가운데 점은 다른 거래처가 쓰는 색)'), sw,
       h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), h('button', { class: 'btn', type: 'submit' }, '저장')),
-      c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기')),
-      c.id && h('p', { class: 'help' }, '이름·색을 바꾸면 이 거래처의 기존 일정에도 바로 반영됩니다. 이미 일정에 쓰인 거래처는 삭제 대신 숨기기만 됩니다.')));
+      c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기'))));
 }
 
 /* ---------- 일정 유형 관리 (관리자) ---------- */
@@ -1189,8 +1182,7 @@ function catCard() {
   return h('div', { class: 'card list' },
     list.map((c, i) => h('div', { class: 'item', style: 'align-items:center' },
       h('button', { style: 'flex:1;text-align:left;min-width:0', onclick: () => openCat(c) },
-        h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.label, c.shared && h('span', { class: 'badge fill c-gray' }, '부서 공통'), !c.active && h('span', { class: 'badge t-deadline' }, '숨김')),
-        h('div', { class: 'ss' }, '눌러서 이름·색 수정')),
+        h('div', { class: 'tt' }, h('i', { class: 'dot c-' + c.color }), c.label, c.shared && h('span', { class: 'badge fill c-gray' }, '부서 공통'), !c.active && h('span', { class: 'badge t-deadline' }, '숨김'))),
       h('button', { class: 'ord', 'aria-label': '위로', disabled: i === 0, onclick: () => move(i, i - 1) }, '▲'),
       h('button', { class: 'ord', 'aria-label': '아래로', disabled: i === list.length - 1, onclick: () => move(i, i + 1) }, '▼'))),
     h('div', { class: 'pad' }, h('button', { class: 'btn ghost', style: 'width:100%', onclick: () => openCat({ label: '', color: COLORS.find(k => !CATS.some(c => c.color === k)) || 'blue', shared: false, active: true, sort: Math.max(0, ...CATS.map(x => x.sort)) + 10 }) }, '+ 유형 추가')));
@@ -1217,8 +1209,7 @@ function openCat(init) {
       h('label', {}, '이름'), label, h('label', {}, '색상'), sw,
       h('label', { class: 'chk', for: 'catshared' }, shared, '부서 공통 일정 (팀 보기의 "부서 공통" 줄에 표시)'),
       h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), h('button', { class: 'btn', type: 'submit' }, '저장')),
-      c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기')),
-      c.id && h('p', { class: 'help' }, '이름·색을 바꾸면 이 유형의 기존 일정에도 바로 반영됩니다. 이미 일정에 쓰인 유형은 삭제 대신 숨기기만 됩니다.')));
+      c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기'))));
 }
 
 /* ---------- 확인 창 (예/아니오) ---------- */
@@ -1354,7 +1345,7 @@ function openForm(init) {
     h('label', {}, '제목'), title, quick,
     h('div', { class: 'row2' }, h('div', {}, h('label', {}, '시작일'), s), h('div', {}, h('label', {}, '종료일'), e)),
     h('label', {}, '메모'), memo,
-    S.me.is_admin && h('label', {}, '팀원 배정 (관리자) — 선택한 팀원의 일정표에 이 일정이 들어갑니다'), S.me.is_admin && pick, S.me.is_admin && rolesBox,
+    S.me.is_admin && h('label', {}, '팀원 배정'), S.me.is_admin && pick, S.me.is_admin && rolesBox,
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), btn)));
 }
 
