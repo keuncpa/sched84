@@ -241,6 +241,8 @@ h2{font-size:13px;font-weight:400;color:var(--sub);margin:22px 14px 7px}
 /* 창·입력·버튼 */
 .ov{background:rgba(0,0,0,.32)}
 .sheet{border-radius:14px 14px 0 0}.sheet h3{font-weight:600;text-align:center}
+.dnav{display:flex;align-items:center;justify-content:space-between;margin:0 0 12px}.dnav h3{margin:0;flex:1}
+.dnb{border:0;background:none;color:var(--brand);font-size:28px;line-height:1;width:44px;height:36px;padding:0 0 4px;cursor:pointer;border-radius:8px}.dnb:active{opacity:.4}
 .ov:not(.full):not(.mid) .sheet::before{content:'';display:block;width:36px;height:5px;border-radius:3px;background:var(--line);margin:-6px auto 12px}
 .ov.mid .sheet{border-radius:14px}
 label{font-size:13px;margin:14px 2px 6px}
@@ -289,7 +291,7 @@ body.fullpg .tabs{z-index:11}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-28.3.44';   // 날짜.그날 몇 번째 배포.처음부터 누적 배포 횟수 — version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-28.4.45';   // 날짜.그날 몇 번째 배포.처음부터 누적 배포 횟수 — version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -549,7 +551,7 @@ const S = {
   hide: new Set(), onlyMine: false, sheet: false,
   client: '', teamBy: 'people', colorBy: 'client',   // 거래처 필터 / 팀 보기 기준 / 칩 색 기준(거래처·유형)
 };
-if (LS.get('sched84-colorby2') === 'type') S.colorBy = 'type';   // 사용자가 '색: 유형'으로 바꿔 둔 경우만 유형 색
+// (예전의 '색: 유형' 전환과 유형별 숨기기 버튼은 없앰 — 항상 거래처 색, 거래처 없는 일정은 유형 색)   // 사용자가 '색: 유형'으로 바꿔 둔 경우만 유형 색
 const app = document.getElementById('app');
 const mount = (...kids) => app.replaceChildren(...kids.filter(k => k != null && k !== false));
 const nameOf = id => (S.pmap[id] && S.pmap[id].name) || '?';
@@ -893,21 +895,21 @@ function filterBar() {
   ksel.value = S.client;
   return h('div', { class: 'filters' },
     CLIENTS.length > 0 && ksel,
-    CLIENTS.length > 0 && h('button', { class: 'fchip on', onclick: () => { S.colorBy = S.colorBy === 'client' ? 'type' : 'client'; LS.set('sched84-colorby2', S.colorBy); redraw(); } }, S.colorBy === 'client' ? '색: 거래처' : '색: 유형'),
-    h('button', { class: 'fchip' + (S.onlyMine ? ' on' : ''), onclick: () => { S.onlyMine = !S.onlyMine; redraw(); } }, '내 일정만'),
-    CATS.filter(c => c.active || S.events.some(e => e.type === c.id)).map(c => h('button', { class: 'fchip' + (S.hide.has(c.id) ? '' : ' on'), onclick: () => { S.hide.has(c.id) ? S.hide.delete(c.id) : S.hide.add(c.id); redraw(); } },
-      h('i', { class: 'c-' + c.color }), c.label)));
+    h('button', { class: 'fchip' + (S.onlyMine ? ' on' : ''), onclick: () => { S.onlyMine = !S.onlyMine; redraw(); } }, '내 일정만'));
 }
+// 제목에서 거래처 이름을 뺀 '업무'만 (거래처는 태그로 따로 보여 주므로). 업무를 안 적은 일정은 빈 글자
+const workOf = e => { const k = cli(e.client_id); if (!k) return e.title; const t = e.title.trim(); return t.startsWith(k.name) ? t.slice(k.name.length).trim() : t; };
+const fullName = e => { const k = cli(e.client_id); return k ? (k.name + ' ' + workOf(e)).trim() : e.title; };
 // 달력·팀 보기 칩 내용: 거래처가 있으면 [거래처 / 무슨 일정] 두 줄, 없으면 종전처럼 [이름 제목]
 const chipKids = e => {
   const k = cli(e.client_id); if (!k) return [chipText(e)];
-  const what = e.title.replace(k.name, '').trim() || e.title;   // 제목에 거래처 이름이 이미 들어 있으면 중복을 뺌
-  return [h('b', {}, k.name), h('u', {}, what)];
+  const what = workOf(e);
+  return [h('b', {}, k.name), what && h('u', {}, what)];
 };
 // 달력 칸의 칩: 한 줄만. 거래처가 있으면 [거래처 무슨일정], 없으면 [유형 제목] (사람 이름은 넣지 않음 — 누르면 상세에서 확인)
 const calChipKids = e => {
   const k = cli(e.client_id), head = k ? k.name : cat(e.type).label;
-  const rest = e.title.replace(head, '').trim();
+  const rest = k ? workOf(e) : e.title.replace(head, '').trim();
   return [h('b', {}, head), rest && h('u', {}, ' ' + rest)];
 };
 // 같은 거래처(없으면 같은 유형)에 제목까지 같은 일정은 화면에서 하나로 보여 줌.
@@ -917,7 +919,7 @@ const chipText = e => { if (cat(e.type).shared) return e.title; const p = whoOf(
 function eventItem(e, showWho = true, back = null, { day = null, uid = null } = {}) {   // day: 그날 투입되는 사람만 이름에 / uid: 그 사람의 투입 기간으로 표시
   return h('button', { class: 'item', onclick: () => openDetail(e, back) },
     h('span', { class: 'bar ' + ec(e) }),
-    h('span', { style: 'min-width:0' }, h('div', { class: 'tt' }, cli(e.client_id) && h('span', { class: 'badge kb fill c-' + cli(e.client_id).color }, cli(e.client_id).name), e.title),
+    h('span', { style: 'min-width:0' }, h('div', { class: 'tt' }, cli(e.client_id) && h('span', { class: 'badge kb fill c-' + cli(e.client_id).color }, cli(e.client_id).name), workOf(e)),
       h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label)),
       h('div', { class: 'ss' }, [showWho && names(e, 3, day), range(...(uid ? spanOf(e, uid) : [e.start_date, e.end_date]))].filter(Boolean).join(' · '))));
 }
@@ -953,7 +955,7 @@ function viewTeam() {
     const inWeek = new Set(S.events.filter(e => visible(e) && e.client_id && e.start_date <= days[6] && e.end_date >= days[0]).map(e => e.client_id));
     const ks = CLIENTS.filter(c => inWeek.has(c.id));
     body = ks.map(c => h('tr', {}, h('td', { class: 'who k', onclick: () => openClient(c.id) }, h('i', { class: 'dot c-' + c.color }), c.name),
-      days.map(d => { const all = onDay(d).filter(e => e.client_id === c.id); return h('td', { class: d === t ? 'tod' : '' }, uniqEvents(all).map(e => { const same = all.filter(x => x.title === e.title); const text = e.title.replace(c.name, '').trim() || e.title;
+      days.map(d => { const all = onDay(d).filter(e => e.client_id === c.id); return h('td', { class: d === t ? 'tod' : '' }, uniqEvents(all).map(e => { const same = all.filter(x => x.title === e.title); const text = workOf(e) || cat(e.type).label;
         // 같은 제목이 여러 건(사람마다 기간이 다름)이면 칩은 하나만, 누르면 그날 목록을 보여 줌
         return same.length > 1 ? h('button', { class: 'chip ' + ec(e), onclick: ev => { ev.stopPropagation(); openDay(d); } }, text) : chip(e, text); })); })));
     if (!ks.length) body = [h('tr', {}, h('td', { colspan: 8, class: 'empty' }, S.client ? '이 주에는 선택한 거래처의 일정이 없습니다.' : '이 주에는 거래처 일정이 없습니다.'))];
@@ -1071,10 +1073,10 @@ function trashCard() {
   return h('div', { class: 'card' }, h('div', { class: 'kbox', id: 'trashbox', style: 'border-top:0' }, S.trash.map(e => h('div', { class: 'item', style: 'align-items:center' },
     h('span', { class: 'bar ' + ec(e) }),
     h('span', { style: 'flex:1;min-width:0' },
-      h('div', { class: 'tt' }, cli(e.client_id) && h('span', { class: 'badge kb fill c-' + cli(e.client_id).color }, cli(e.client_id).name), e.title),
+      h('div', { class: 'tt' }, cli(e.client_id) && h('span', { class: 'badge kb fill c-' + cli(e.client_id).color }, cli(e.client_id).name), workOf(e)),
       h("div", { class: "ss" }, `${range(e.start_date, e.end_date)} · ${names(e)}`),
       h('div', { class: 'ss' }, `${md(ymd(new Date(e.deleted_at)))} 삭제 · ${left(e)}일 남음`)),
-    h('button', { class: 'btn sm', 'aria-label': `${e.title} 복구`, onclick: async () => { try { await store.restore(e.id); cache.cal = {}; cache.team = {}; cache.mine = null; toast('복구했습니다.'); await refresh(); } catch (er) { toast(errText(er)); } } }, '복구')))));
+    h('button', { class: 'btn sm', 'aria-label': `${fullName(e)} 복구`, onclick: async () => { try { await store.restore(e.id); cache.cal = {}; cache.team = {}; cache.mine = null; toast('복구했습니다.'); await refresh(); } catch (er) { toast(errText(er)); } } }, '복구')))));
 }
 function delAskCard() {
   const chk = h('input', { type: 'checkbox', id: 'askdel', onchange: () => { LS.set(SKIP_DEL, chk.checked ? '0' : '1'); toast(chk.checked ? '삭제 전에 확인 창을 띄웁니다.' : '확인 없이 바로 삭제합니다.'); } });
@@ -1284,7 +1286,7 @@ function openClientEdit(init) {
   } }, '삭제');
   sheet(h('h3', {}, c.id ? '거래처 수정' : '거래처 추가'),
     h('form', { onsubmit: ev => { ev.preventDefault(); save({}); } },
-      h('label', {}, '이름'), name, h('label', {}, '색상 (달력에서 "색: 거래처"로 볼 때 쓰는 색 · 가운데 점은 다른 거래처가 쓰는 색)'), sw,
+      h('label', {}, '이름'), name, h('label', {}, '색상 (가운데 점은 다른 거래처가 쓰는 색)'), sw,
       h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, '취소'), h('button', { class: 'btn', type: 'submit' }, '저장')),
       c.id && h('div', { class: 'btns' }, del, h('button', { class: 'btn ghost', type: 'button', onclick: () => save({ active: !c.active }) }, c.active ? '숨기기 (새 일정에서 선택 불가)' : '다시 보이기'))));
 }
@@ -1355,13 +1357,27 @@ function sheetAt(cls, ...kids) {   // cls 'mid' = 화면 가운데에 띄움
   document.body.append(ov);
   document.body.classList.toggle('fullpg', cls === 'full');   // 전체 화면(일정 상세·거래처)에서는 아래 탭 바를 계속 보이게 함
 }
-function closeSheet() { const o = document.getElementById('ov'); if (o) o.remove(); S.sheet = false; document.body.classList.remove('fullpg'); }
+function closeSheet() { const o = document.getElementById('ov'); if (o) o.remove(); S.sheet = false; dayOpen = null; document.body.classList.remove('fullpg'); }
 // 달력에서 날짜를 누르면: 그날 일정을 화면 가운데에 펼침
+let dayOpen = null;
 function openDay(d) {
   const evs = onDay(d), back = () => openDay(d);
-  sheetAt('mid', h('h3', {}, `${md(d)} 일정`),
+  sheetAt('mid', h('div', { class: 'dnav' },
+      h('button', { class: 'dnb', 'aria-label': '전날', onclick: () => goDay(addDays(d, -1)) }, '‹'),
+      h('h3', {}, `${md(d)} 일정`),
+      h('button', { class: 'dnb', 'aria-label': '다음 날', onclick: () => goDay(addDays(d, 1)) }, '›')),
     h('div', { class: 'card list' }, evs.length ? evs.map(e => eventItem(e, true, back, { day: d })) : h('div', { class: 'empty' }, '등록된 일정이 없습니다.')),
     h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기'), h('button', { class: 'btn', onclick: () => openForm({ start_date: d }) }, '+ 일정 추가')));
+  dayOpen = d;
+}
+// 그날 일정 창의 ‹ › : 전날·다음 날로. 보고 있던 달(주)을 벗어나면 달력(주)도 같이 넘김
+async function goDay(d) {
+  S.sel = d; let moved = false;
+  if (S.view === 'cal') { const [a, b] = monthSpan(); if (d < a || d > b) { S.month = d.slice(0, 8) + '01'; moved = true; } }
+  else if (S.view === 'team') { if (d < S.week || d > addDays(S.week, 6)) { S.week = mondayOf(d); moved = true; } }
+  if (!moved) { if (S.view === 'cal') viewCal(); return openDay(d); }
+  const p = refresh(); openDay(d);          // 저장해 둔 내용으로 먼저 보여 주고
+  await p; if (dayOpen === d) openDay(d);   // 새로 받아온 내용으로 한 번 더
 }
 function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표시
   const del = h('button', { class: 'btn danger', onclick: async () => {
@@ -1378,7 +1394,7 @@ function openDetail(e, back = null) {   // 일정 상세: 화면 전체로 표�
     h('div', { class: 'dtop' }, h('button', { class: 'btn ghost sm', onclick: back || closeSheet }, back ? '‹ 목록으로' : '‹ 닫기')),
     h('div', { class: 'dbody' },
       h('div', { class: 'tags' }, h('span', { class: 'badge ' + cc(e.type) }, cat(e.type).label)),
-      h('h2', { class: 'dtitle' }, kk && h('span', { class: 'badge kb fill c-' + kk.color }, kk.name), e.title),
+      h('h2', { class: 'dtitle' }, kk && h('span', { class: 'badge kb fill c-' + kk.color }, kk.name), workOf(e)),
       kk && h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '거래처'), h('button', { class: 'person', onclick: () => openClient(kk.id, () => openDetail(e, back)) }, h('i', { class: 'dot c-' + kk.color }), kk.name, h('small', {}, '일정 모두 보기 ›'))),
       h('div', { class: 'dsec' }, h('div', { class: 'dlab' }, '기간'),
         h('div', { class: 'dbig' }, e.start_date === e.end_date ? md(e.start_date) : `${md(e.start_date)} – ${md(e.end_date)}`)),
@@ -1396,7 +1412,7 @@ function openForm(init) {
   const ksel = h('select', { class: 'inp' }, h('option', { value: '' }, '선택 안 함'), kopts.map(c => h('option', { value: c.id }, c.name)));
   ksel.value = ev.client_id || '';
   ksel.addEventListener('change', () => drawType());
-  const title = h('input', { type: 'text', maxlength: 60, value: ev.title });
+  const title = h('input', { type: 'text', maxlength: 60, value: ev.title }), tlab = h('label', {}, '제목');
   const s = h('input', { type: 'date', value: ev.start_date, onchange: () => { if (e.value < s.value) e.value = s.value; } }), e = h('input', { type: 'date', value: ev.end_date });
   const memo = h('textarea', { maxlength: 500, placeholder: '집합 시간, 장소 등 (선택)' }); memo.value = ev.memo || '';
   const seg = h('div', { class: 'seg' }), quick = h('div', { class: 'quick' });
@@ -1404,6 +1420,7 @@ function openForm(init) {
     seg.replaceChildren(...CATS.filter(c => c.active || c.id === ev.type).map(c => h('button', { type: 'button', class: ev.type === c.id ? 'on fill c-' + c.color : '', onclick: () => { ev.type = c.id; drawType(); } }, c.label)));
     const hint = HINTS[ev.type] || {};
     title.placeholder = ksel.value ? '예: 기말감사, 재고실사, 내부회계' : (hint.ph || '일정 제목');
+    tlab.textContent = ksel.value ? '업무 (선택)' : '제목';
     quick.replaceChildren(...(hint.quick || []).map(q => h('button', { type: 'button', onclick: () => { title.value = q; } }, q)));
   };
   drawType();
@@ -1438,7 +1455,7 @@ function openForm(init) {
   const btn = h('button', { class: 'btn', type: 'submit' }, '저장');
   sheet(h('h3', {}, ev.id ? '일정 수정' : '일정 추가'), h('form', { onsubmit: async x => {
     x.preventDefault();
-    if (!title.value.trim()) return toast('제목을 입력해 주세요.');
+    if (!title.value.trim() && !ksel.value) return toast('제목을 입력해 주세요.');
     if (!s.value || !e.value) return toast('날짜를 입력해 주세요.');
     if (e.value < s.value) return toast('종료일이 시작일보다 빠릅니다.');
     btn.disabled = true;
@@ -1471,7 +1488,7 @@ function openForm(init) {
   } },
     h('label', {}, '유형'), seg,
     CLIENTS.length > 0 && h('label', {}, '거래처 (선택)'), CLIENTS.length > 0 && ksel,
-    h('label', {}, '제목'), title, quick,
+    tlab, title, quick,
     h('div', { class: 'row2' }, h('div', {}, h('label', {}, '시작일'), s), h('div', {}, h('label', {}, '종료일'), e)),
     h('label', {}, '메모'), memo,
     S.me.is_admin && h('label', {}, '팀원 배정'), S.me.is_admin && pick, S.me.is_admin && rolesBox,

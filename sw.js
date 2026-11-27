@@ -1,6 +1,6 @@
 // 앱 껍데기(화면 파일)만 저장해 두는 서비스 워커. 일정 데이터는 항상 서버에서 새로 받습니다.
 // 파일을 수정해 다시 올릴 때는 아래 버전 숫자를 올려 주세요.
-const CACHE = 'sched84-v40';
+const CACHE = 'sched84-v41';
 const SHELL = ['./', './index.html', './config.js', './supabase.js', './manifest.webmanifest', './icons/icon-192.png'];
 
 self.addEventListener('install', e => {
