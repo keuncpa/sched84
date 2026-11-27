@@ -263,6 +263,8 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 .pick button.all{background:none;box-shadow:inset 0 0 0 .5px var(--sub)}
 .roles{border:0;background:var(--fillc)}.roles>div{border-bottom:.5px solid var(--line)}.roles select{border:0;background:var(--card)}
 .ord{border:0;background:var(--fillc)}
+.ordn{flex:none;width:22px;text-align:center;color:var(--sub);font-size:14px;font-variant-numeric:tabular-nums}
+.team tr.me .who{color:var(--brand);box-shadow:inset 3px 0 0 var(--brand)}
 .sw button.on{outline:2.5px solid var(--brand)}
 .install{background:var(--card);border-bottom:.5px solid var(--line)}
 .link{color:var(--brand);text-decoration:none}
@@ -279,7 +281,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px soli
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-27.3';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.4';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -394,7 +396,11 @@ function supaStore(sb) {
     async signOut() { await sb.auth.signOut(); },
     async resetRequest(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname.replace(/index\.html$/, '') })); },
     async setPassword(pw) { ok(await sb.auth.updateUser({ password: pw })); },
-    async profiles() { return ok(await sb.from('profiles').select('id,name,title,approved,is_admin,left_at').order('name')); },
+    async profiles() {
+      const r = await sb.from('profiles').select('id,name,title,approved,is_admin,left_at,sort').order('name');
+      return r.error ? ok(await sb.from('profiles').select('id,name,title,approved,is_admin,left_at').order('name')) : r.data;   // 순서 칸(v7)이 아직 없는 서버에서도 동작
+    },
+    async setOrder(list) { await Promise.all(list.map(async ([id, sort]) => { const d = ok(await sb.from('profiles').update({ sort }).eq('id', id).select('id,sort')); if (!d || !d.length || d[0].sort !== sort) throw new Error('permission denied'); })); },
     async clients() { return ok(await sb.from('clients').select('id,name,color,active').order('name')); },
     async saveClient(c) {
       const row = { name: c.name, color: c.color, active: c.active };
@@ -475,6 +481,7 @@ function demoStore() {
     async session() { return { id: 'me' }; },
     async signIn() {}, async signUp() { return true; }, async resetRequest() {}, async setPassword() {}, async signOut() { try { localStorage.removeItem(KEY); } catch (e) {} },
     async profiles() { return cp(db.profiles); },
+    async setOrder(list) { for (const [id, sort] of list) db.profiles.find(p => p.id === id).sort = sort; persist(); },
     async clients() { return cp(db.clients); },
     async saveClient(c) {
       if (db.clients.some(x => x.id !== c.id && x.name.toLowerCase() === c.name.toLowerCase())) throw new Error('duplicate key');
@@ -519,6 +526,8 @@ if (LS.get('sched84-colorby2') === 'type') S.colorBy = 'type';   // 사용자가
 const app = document.getElementById('app');
 const mount = (...kids) => app.replaceChildren(...kids.filter(k => k != null && k !== false));
 const nameOf = id => (S.pmap[id] && S.pmap[id].name) || '?';
+// 구성원 순서: 관리자가 정한 서열(sort) → 아직 안 정한 사람은 아래쪽에 이름순
+const bySeniority = (a, b) => (a.sort ?? 100000) - (b.sort ?? 100000) || a.name.localeCompare(b.name, 'ko');
 const whoOf = e => (e.members && e.members.length) ? e.members : [e.owner_id];   // 배정이 있으면 배정된 사람들, 없으면 작성자
 const isMine = e => whoOf(e).includes(S.user.id);
 const names = (e, max = 3) => { const n = whoOf(e).map(nameOf).sort((a, b) => a.localeCompare(b, 'ko')); return n.length > max ? `${n.slice(0, max).join(', ')} 외 ${n.length - max}명` : n.join(', '); };
@@ -884,9 +893,9 @@ function viewTeam() {
   } else {
     // 팀원별: 재직자 전원 + (퇴사자라도) 이 주에 일정이 있는 사람
     const busy = new Set(); S.events.forEach(e => { if (!cat(e.type).shared) whoOf(e).forEach(id => busy.add(id)); });
-    const people = S.profiles.filter(p => p.approved || busy.has(p.id)).sort((a, b) => (b.id === S.user.id) - (a.id === S.user.id) || (b.approved - a.approved) || a.name.localeCompare(b.name, 'ko'));
+    const people = S.profiles.filter(p => p.approved || busy.has(p.id)).sort((a, b) => (b.approved - a.approved) || bySeniority(a, b));   // 서열 순서 그대로. 본인 줄은 본인 화면에서만 살짝 강조(.me)
     const deptRow = h('tr', {}, h('td', { class: 'who' }, '부서 공통'), days.map(d => h('td', { class: d === t ? 'tod' : '' }, cellChips(onDay(d).filter(e => cat(e.type).shared)))));
-    body = [deptRow, ...people.map(p => h('tr', {}, h('td', { class: 'who' }, p.name, (p.title || !p.approved) && h('small', {}, p.approved ? p.title : (p.left_at ? '퇴사' : '미승인'))),
+    body = [deptRow, ...people.map(p => h('tr', { class: p.id === S.user.id ? 'me' : '' }, h('td', { class: 'who' }, p.name, (p.title || !p.approved) && h('small', {}, p.approved ? p.title : (p.left_at ? '퇴사' : '미승인'))),
       days.map(d => { const mine = p.id === S.user.id; return h('td', { class: (d === t ? 'tod ' : '') + (mine ? 'mine' : ''), onclick: mine ? () => openForm({ start_date: d }) : null },
         cellChips(onDay(d).filter(e => !cat(e.type).shared && whoOf(e).includes(p.id)))); })))];
     help = '내 줄의 빈 칸을 누르면 그 날짜로 일정을 추가합니다. 표는 좌우로 밀어서 볼 수 있습니다.';
@@ -943,7 +952,7 @@ function viewSet() {
       p.approved && p.id !== S.user.id && h('button', { class: 'btn sm ghost', onclick: leave(p) }, '퇴사 처리'),
       !p.approved && !p.left_at && h('button', { class: 'btn sm', onclick: () => act(() => store.setApproved(p.id, true)) }, '승인'),
       p.left_at && h('button', { class: 'btn sm ghost', onclick: () => act(() => store.setLeft(p.id, false)) }, '복귀')));
-  const byName = (a, b) => a.approved - b.approved || a.name.localeCompare(b.name, 'ko');
+  const byName = (a, b) => a.approved - b.approved || bySeniority(a, b);   // 승인 대기가 맨 위, 그 아래는 서열순
   const actives = S.profiles.filter(p => !p.left_at).sort(byName), lefts = S.profiles.filter(p => p.left_at).sort(byName);
   const members = actives.map(row);
   elMain.replaceChildren(...[
@@ -951,6 +960,7 @@ function viewSet() {
     h('h2', {}, '엑셀로 내려받기'), exportCard(),
     h('h2', {}, '일정 삭제'), delAskCard(),
     h('h2', {}, `구성원 (${actives.length}명)`), h('div', { class: 'card list' }, members),
+    S.me.is_admin && h('h2', {}, '구성원 순서 (관리자)'), S.me.is_admin && orderCard(),
     lefts.length > 0 && h('h2', {}, `퇴사자 (${lefts.length}명)`), lefts.length > 0 && h('div', { class: 'card list' }, lefts.map(row)),
     lefts.length > 0 && h('p', { class: 'help pad', style: 'padding-top:6px' }, '퇴사자가 등록했거나 배정됐던 일정은 지워지지 않고 그대로 남아 있습니다.'),
     S.me.is_admin && h('h2', {}, `거래처 관리 (관리자) · ${CLIENTS.length}곳`), S.me.is_admin && clientCard(),
@@ -962,6 +972,23 @@ function viewSet() {
     h('p', { class: 'help', style: 'text-align:center' }, '앱 버전 ' + APP_VERSION)].filter(Boolean));
 }
 
+// 구성원 순서(서열): 관리자가 ▲▼로 옮김 → 팀 보기·엑셀·배정 목록에 같은 순서로 나옴
+function orderCard() {
+  const list = S.profiles.filter(p => p.approved && !p.left_at).sort(bySeniority);
+  const move = async (i, j) => {
+    const arr = [...list]; [arr[i], arr[j]] = [arr[j], arr[i]];
+    // 전체를 10, 20, 30… 으로 다시 매기고, 번호가 달라진 사람만 저장
+    const changed = arr.map((p, k) => [p.id, (k + 1) * 10, p.sort]).filter(([, n, old]) => old !== n).map(([id, n]) => [id, n]);
+    try { await store.setOrder(changed); await refresh(); } catch (e) { toast(errText(e)); }
+  };
+  return h('div', {}, h('div', { class: 'card list', id: 'ordcard' },
+    list.map((p, i) => h('div', { class: 'item', style: 'align-items:center' },
+      h('span', { class: 'ordn' }, i + 1),
+      h('span', { style: 'flex:1;min-width:0' }, h('div', { class: 'tt' }, p.name), p.title && h('div', { class: 'ss' }, p.title)),
+      h('button', { class: 'ord', 'aria-label': `${p.name} 위로`, disabled: i === 0, onclick: () => move(i, i - 1) }, '▲'),
+      h('button', { class: 'ord', 'aria-label': `${p.name} 아래로`, disabled: i === list.length - 1, onclick: () => move(i, i + 1) }, '▼')))),
+    h('p', { class: 'help pad', style: 'padding-top:6px' }, '팀 보기, 엑셀, 팀원 배정 목록에 이 순서로 나옵니다. 새로 승인된 사람은 맨 아래에 들어옵니다.'));
+}
 function delAskCard() {
   const chk = h('input', { type: 'checkbox', id: 'askdel', onchange: () => { LS.set(SKIP_DEL, chk.checked ? '0' : '1'); toast(chk.checked ? '삭제 전에 확인 창을 띄웁니다.' : '확인 없이 바로 삭제합니다.'); } });
   chk.checked = LS.get(SKIP_DEL) !== '1';
@@ -1050,7 +1077,7 @@ const XL = (() => {
     const qa = `${year}-${pad(q * 3 - 2)}-01`, qb = ymd(new Date(year, q * 3, 0));
     const inQ = events.filter(e => e.start_date <= qb && e.end_date >= qa);
     const busy = new Set(inQ.flatMap(e => cat(e.type).shared ? [] : whoOf(e)));
-    const people = S.profiles.filter(p => (p.approved && !p.left_at) || busy.has(p.id)).sort((a, b) => rankOf(a) - rankOf(b) || a.name.localeCompare(b.name, 'ko'));
+    const people = S.profiles.filter(p => (p.approved && !p.left_at) || busy.has(p.id)).sort((a, b) => (a.sort ?? 100000) - (b.sort ?? 100000) || rankOf(a) - rankOf(b) || a.name.localeCompare(b.name, 'ko'));   // 관리자가 정한 서열, 없으면 직급 글자로 추정
     put(0, 1, `감사 ${DEPT} 일정표 · ${(t => `${String(t.getFullYear()).slice(2)}. ${t.getMonth() + 1}. ${t.getDate()}(${DOW[t.getDay()]})`)(parse(today()))} 기준 (일정표 앱에서 내려받음)`, { border: false, left: true });
     let r = 1;
     for (let m = q * 3 - 3; m < q * 3; m++) {
@@ -1280,7 +1307,7 @@ function openForm(init) {
   const sel = new Set(ev.members), pick = h('div', { class: 'pick' }), rolesBox = h('div', {});
   const roles = { ...(ev.roles || {}) }, roles0 = { ...(ev.roles || {}) };
   const guessRole = p => ROLES.find(r => (p.title || '').includes(r)) || '';   // 프로필 직급에 같은 말이 있으면 그걸 기본값으로
-  const team = S.profiles.filter(p => p.approved || sel.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, 'ko'));   // 이미 배정돼 있던 퇴사자는 해제할 수 있게 표시
+  const team = S.profiles.filter(p => p.approved || sel.has(p.id)).sort((a, b) => (b.approved - a.approved) || bySeniority(a, b));   // 이미 배정돼 있던 퇴사자는 해제할 수 있게 표시
   const drawPick = () => { paintPick(); drawRoles(); };   // 배정 칩과 역할 목록을 함께 다시 그림 (drawRoles 는 바로 아래에서 정의)
   const paintPick = () => pick.replaceChildren(
     ...team.map(p => h('button', { type: 'button', class: sel.has(p.id) ? 'on' : '', 'aria-pressed': sel.has(p.id) ? 'true' : 'false', onclick: () => { if (sel.has(p.id)) sel.delete(p.id); else if (p.approved) { sel.add(p.id); if (roles[p.id] == null) roles[p.id] = guessRole(p); } drawPick(); } }, p.name + (p.approved ? '' : ' (퇴사)'))),
