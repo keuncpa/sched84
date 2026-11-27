@@ -187,7 +187,7 @@ input[type=date]::-webkit-date-and-time-value{text-align:left}
 'use strict';
 const CFG = window.APP_CONFIG || {};
 const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_KEY);
-const APP_VERSION = '2026-11-26.17';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
+const APP_VERSION = '2026-11-27.1';   // 배포할 때마다 version.json 과 함께 올림 → 열려 있는 앱이 스스로 새로고침
 const HASH0 = location.hash;   // 비밀번호 재설정 링크로 들어왔는지 판별용
 const DEPT = CFG.DEPT_NAME || '84부';
 
@@ -849,6 +849,7 @@ function viewSet() {
   const members = actives.map(row);
   elMain.replaceChildren(...[
     h('h2', {}, '내 정보'), h('div', { class: 'card pad' }, h('div', { class: 'row2' }, h('div', {}, h('label', {}, '이름'), name), h('div', {}, h('label', {}, '직급'), title)), h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: save }, '저장'))),
+    h('h2', {}, '엑셀로 내려받기'), exportCard(),
     h('h2', {}, '일정 삭제'), delAskCard(),
     h('h2', {}, `구성원 (${actives.length}명)`), h('div', { class: 'card list' }, members),
     lefts.length > 0 && h('h2', {}, `퇴사자 (${lefts.length}명)`), lefts.length > 0 && h('div', { class: 'card list' }, lefts.map(row)),
@@ -866,6 +867,157 @@ function delAskCard() {
   const chk = h('input', { type: 'checkbox', id: 'askdel', onchange: () => { LS.set(SKIP_DEL, chk.checked ? '0' : '1'); toast(chk.checked ? '삭제 전에 확인 창을 띄웁니다.' : '확인 없이 바로 삭제합니다.'); } });
   chk.checked = LS.get(SKIP_DEL) !== '1';
   return h('div', { class: 'card pad' }, h('label', { class: 'chk', for: 'askdel', style: 'margin-top:0' }, chk, '일정을 삭제하기 전에 확인 창 띄우기'));
+}
+
+/* ---------- 엑셀로 내려받기 (부서 일정표 양식) ----------
+   팀에서 쓰던 엑셀 양식 그대로: 분기별 시트(예: 26.10月~12月) 안에 월별 표 3개.
+   표마다 [날짜·요일] → [거래처 주간업무] → [사람별 줄]. 주말 칸은 연한 색, 일정은 거래처 색으로 칠하고 기간만큼 셀 병합.
+   외부 라이브러리 없이 xlsx(zip+xml)를 직접 만듦. */
+const XL = (() => {
+  const enc = new TextEncoder();
+  const esc = s => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const colName = n => { let s = ''; for (n++; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };   // 0 → A
+  const crcT = (() => { const t = new Uint32Array(256); for (let i = 0; i < 256; i++) { let c = i; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[i] = c >>> 0; } return t; })();
+  const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = crcT[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  function zip(files) {          // 압축 없이 묶기(store). 파일이 작아서 충분함
+    const parts = [], central = []; let off = 0;
+    for (const [name, text] of files) {
+      const nm = enc.encode(name), data = enc.encode(text), crc = crc32(data);
+      const lh = new DataView(new ArrayBuffer(30)); lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(10, 0, true); lh.setUint16(12, 0x21, true);
+      lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, nm.length, true);
+      const ch = new DataView(new ArrayBuffer(46)); ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(14, 0x21, true);
+      ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, nm.length, true); ch.setUint32(42, off, true);
+      parts.push(new Uint8Array(lh.buffer), nm, data); central.push(new Uint8Array(ch.buffer), nm); off += 30 + nm.length + data.length;
+    }
+    const csize = central.reduce((n, p) => n + p.length, 0), end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, csize, true); end.setUint32(16, off, true);
+    return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+  // 서식 모음: 같은 서식은 한 번만 등록
+  function styles() {
+    const fonts = ['<font><sz val="10"/><color rgb="FF000000"/><name val="맑은 고딕"/><family val="2"/><charset val="129"/></font>'], fills = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'];
+    const xfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'], fi = {}, fl = {}, xi = {};
+    const get = (o = {}) => {
+      const key = JSON.stringify([o.fill || '', o.bold || 0, o.head || 0, o.color || '', o.wrap || 0, o.border === false ? 0 : 1, o.left || 0, o.shrink || 0]);
+      if (xi[key] != null) return xi[key];
+      const fk = [o.bold || 0, o.head || 0, o.color || ''].join();
+      if (fi[fk] == null) { fi[fk] = fonts.length; fonts.push(`<font>${o.bold ? '<b/>' : ''}<sz val="${o.head ? 11 : 10}"/><color rgb="FF${o.color || '000000'}"/><name val="${o.head ? 'HY견고딕' : '맑은 고딕'}"/><family val="2"/><charset val="129"/></font>`); }
+      let fid = 0; if (o.fill) { if (fl[o.fill] == null) { fl[o.fill] = fills.length; fills.push(`<fill><patternFill patternType="solid"><fgColor rgb="FF${o.fill}"/><bgColor indexed="64"/></patternFill></fill>`); } fid = fl[o.fill]; }
+      xi[key] = xfs.length;
+      xfs.push(`<xf numFmtId="0" fontId="${fi[fk]}" fillId="${fid}" borderId="${o.border === false ? 0 : 1}" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="${o.left ? 'left' : 'center'}" vertical="center"${o.wrap ? ' wrapText="1"' : ''}${o.shrink ? ' shrinkToFit="1"' : ''}/></xf>`);
+      return xi[key];
+    };
+    const xml = () => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="${fonts.length}">${fonts.join('')}</fonts><fills count="${fills.length}">${fills.join('')}</fills>` +
+      `<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/></border></borders>` +
+      `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.join('')}</cellXfs><cellStyles count="1"><cellStyle name="표준" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    return { get, xml };
+  }
+  function sheetXml(sh) {
+    const rows = Object.keys(sh.cells).map(Number).sort((a, b) => a - b).map(r => {
+      const cs = Object.keys(sh.cells[r]).map(Number).sort((a, b) => a - b).map(c => {
+        const x = sh.cells[r][c], ref = colName(c) + (r + 1);
+        if (x.v == null || x.v === '') return `<c r="${ref}" s="${x.s}"/>`;
+        return typeof x.v === 'number' ? `<c r="${ref}" s="${x.s}"><v>${x.v}</v></c>` : `<c r="${ref}" s="${x.s}" t="inlineStr"><is><t xml:space="preserve">${esc(x.v)}</t></is></c>`;
+      }).join('');
+      return `<row r="${r + 1}" ht="${sh.heights[r] || 15}" customHeight="1">${cs}</row>`;
+    }).join('');
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>` +
+      `<sheetViews><sheetView workbookViewId="0"${sh.first ? ' tabSelected="1"' : ''}><pane xSplit="2" ySplit="3" topLeftCell="C4" activePane="bottomRight" state="frozen"/><selection pane="bottomRight" activeCell="C4" sqref="C4"/></sheetView></sheetViews>` +
+      `<sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="4.7" customWidth="1"/><col min="2" max="2" width="9.7" customWidth="1"/><col min="3" max="33" width="8.7" customWidth="1"/></cols>` +
+      `<sheetData>${rows}</sheetData>${sh.merges.length ? `<mergeCells count="${sh.merges.length}">${sh.merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : ''}` +
+      `<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
+  }
+  function workbook(sheets, st) {
+    const files = [['[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`],
+      ['_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+      ['xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets>${sheets.map((s, i) => `<sheet name="${esc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`],
+      ['xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+      ['xl/styles.xml', st.xml()], ...sheets.map((s, i) => [`xl/worksheets/sheet${i + 1}.xml`, sheetXml(s)])];
+    return zip(files);
+  }
+  // 앱의 색 이름 → 엑셀 칠 색 [배경, 글자]
+  const NAMED = { blue: 'DBE7FF', green: 'D8F3DF', red: 'FFDCDC', purple: 'EADCFF', orange: 'FFE6CC', teal: 'CDF3F0', pink: 'FFDCEE', gray: 'E6E8EC' };
+  const hsl = (hh, s, l) => { s /= 100; l /= 100; const a = s * Math.min(l, 1 - l), f = n => { const k = (n + hh / 30) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))).toString(16).padStart(2, '0'); }; return (f(0) + f(8) + f(4)).toUpperCase(); };
+  const paint = id => { const m = /^([hs])(\d+)$/.exec(id || ''); return m ? (m[1] === 'h' ? [hsl(+m[2], 85, 90), ''] : [hsl(+m[2], 62, 40), 'FFFFFF']) : [NAMED[id] || NAMED.gray, '']; };
+  const WEEKEND = 'FDE9D9';
+  const label = e => { const k = cli(e.client_id); if (!k) return e.title; const rest = e.title.replace(k.name, '').trim(); return rest ? `${k.name} ${rest}` : k.name; };
+  const rankOf = p => { const t = p.title || ''; const i = [/상무|전무|대표|이사|파트너|부대표/, /매니저|부장|차장/, /인차지|과장/, /시니어|대리/, /스탭|스태프|주니어|사원/, /수습/].findIndex(r => r.test(t)); return i < 0 ? 4.5 : i; };
+
+  // 한 분기(시트 1장)
+  function quarterSheet(st, year, q, events, first) {
+    const sh = { name: `${String(year).slice(2)}.${q * 3 - 2}月~${q * 3}月`, cells: {}, merges: [], heights: {}, first };
+    const put = (r, c, v, style) => { (sh.cells[r] = sh.cells[r] || {})[c] = { v, s: st.get(style) }; };
+    const merge = (r1, c1, r2, c2) => { if (r1 !== r2 || c1 !== c2) sh.merges.push(`${colName(c1)}${r1 + 1}:${colName(c2)}${r2 + 1}`); };
+    const qa = `${year}-${pad(q * 3 - 2)}-01`, qb = ymd(new Date(year, q * 3, 0));
+    const inQ = events.filter(e => e.start_date <= qb && e.end_date >= qa);
+    const busy = new Set(inQ.flatMap(e => cat(e.type).shared ? [] : whoOf(e)));
+    const people = S.profiles.filter(p => (p.approved && !p.left_at) || busy.has(p.id)).sort((a, b) => rankOf(a) - rankOf(b) || a.name.localeCompare(b.name, 'ko'));
+    put(0, 1, `${DEPT} 일정표 · ${md(today())} 기준 (일정표 앱에서 내려받음)`, { border: false, left: true });
+    let r = 1;
+    for (let m = q * 3 - 3; m < q * 3; m++) {
+      const n = new Date(year, m + 1, 0).getDate(), day = d => `${year}-${pad(m + 1)}-${pad(d)}`, dow = d => new Date(year, m, d).getDay(), we = d => dow(d) === 0 || dow(d) === 6;
+      const ma = day(1), mb = day(n), evs = inQ.filter(e => e.start_date <= mb && e.end_date >= ma).sort((a, b) => a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : (a.end_date > b.end_date ? -1 : 1));
+      const span = e => [e.start_date < ma ? 1 : +e.start_date.slice(8), e.end_date > mb ? n : +e.end_date.slice(8)];
+      // 평일이 하루라도 끼어 있으면 평일 구간만 칠함(주말에서 끊음), 주말에만 있는 일정은 그대로
+      const segs = e => { const [a, b] = span(e), days = []; for (let d = a; d <= b; d++) days.push(d); const use = days.some(d => !we(d)) ? days.filter(d => !we(d)) : days, out = []; for (const d of use) { const l = out[out.length - 1]; if (l && l[1] === d - 1) l[1] = d; else out.push([d, d]); } return out; };
+      const lanes = list => { const ends = [], rows = []; for (const e of list) { const [a, b] = span(e); let i = ends.findIndex(x => x < a); if (i < 0) i = ends.length; ends[i] = b; (rows[i] = rows[i] || []).push(e); } return rows; };
+      const grid = (row, bold) => { for (let d = 1; d <= n; d++) put(row, d + 1, '', { fill: we(d) ? WEEKEND : '' }); };
+      // 일정 막대: 거래처(없으면 유형) 색으로 칠하고 병합. 칸보다 긴 글자는 잘리지 않게 줄여서 표시
+      const bar = (row, e, text) => { const [bg, fg] = paint(cli(e.client_id) ? cli(e.client_id).color : cat(e.type).color); for (const [a, b] of segs(e)) { for (let d = a; d <= b; d++) put(row, d + 1, d === a ? text : '', { fill: bg, color: fg, shrink: true }); merge(row, a + 1, row, b + 1); } };
+      // 머리줄: 날짜 / 요일
+      put(r, 0, `${m + 1}월`, { head: true, border: false }); put(r + 1, 0, '', { head: true, border: false }); merge(r, 0, r + 1, 0);
+      put(r, 1, '구분', {}); put(r + 1, 1, '', {}); merge(r, 1, r + 1, 1);
+      for (let d = 1; d <= n; d++) { put(r, d + 1, d, { fill: we(d) ? WEEKEND : '' }); put(r + 1, d + 1, DOW[dow(d)], { fill: we(d) ? WEEKEND : '' }); }
+      r += 2;
+      // 거래처 주간업무: 거래처가 지정된 일정 + 부서 공통 일정
+      const top = lanes(evs.filter(e => cli(e.client_id) || cat(e.type).shared)), tn = Math.max(6, top.length);
+      for (let i = 0; i < tn; i++) { put(r + i, 1, i ? '' : '거래처\n주간업무', { bold: true, wrap: true }); grid(r + i); (top[i] || []).forEach(e => bar(r + i, e, label(e))); }
+      merge(r, 1, r + tn - 1, 1); r += tn;
+      put(r, 1, '', {}); grid(r); sh.heights[r] = 10.5; r++;
+      // 사람별 줄 (같은 날 일정이 겹치면 줄을 늘림)
+      for (const p of people) {
+        const mine = lanes(evs.filter(e => !cat(e.type).shared && whoOf(e).includes(p.id))), pn = Math.max(1, mine.length);
+        for (let i = 0; i < pn; i++) { put(r + i, 1, i ? '' : p.name, {}); grid(r + i); (mine[i] || []).forEach(e => bar(r + i, e, label(e) + (cli(e.client_id) && (e.roles || {})[p.id] === '인차지' ? ' (인차지)' : ''))); }
+        merge(r, 1, r + pn - 1, 1); r += pn;
+      }
+      put(r, 1, '', {}); grid(r); r += 3;   // 여유 한 줄 + 빈 줄 2개
+    }
+    return sh;
+  }
+  return { build(quarters, events) { const st = styles(); return workbook(quarters.map(([y, q], i) => quarterSheet(st, y, q, events, i === 0)), st); } };
+})();
+
+function exportCard() {
+  const t = parse(today()), y0 = t.getFullYear(), q0 = Math.floor(t.getMonth() / 3) + 1, opts = [];
+  for (let i = -2; i <= 4; i++) { const k = y0 * 4 + (q0 - 1) + i, y = Math.floor(k / 4), q = k % 4 + 1; opts.push([`${y}-${q}`, `${y}년 ${q * 3 - 2}~${q * 3}월${i === 0 ? ' (이번 분기)' : ''}`]); }
+  opts.push([`${y0}-all`, `${y0}년 전체 (시트 4장)`], [`${y0 + 1}-all`, `${y0 + 1}년 전체 (시트 4장)`]);
+  const sel = h('select', { class: 'inp', 'aria-label': '내려받을 기간' }, opts.map(([v, l]) => h('option', { value: v, selected: v === `${y0}-${q0}` }, l)));
+  const btn = h('button', { class: 'btn', id: 'xlbtn', onclick: async () => {
+    const [y, q] = sel.value.split('-'), quarters = q === 'all' ? [1, 2, 3, 4].map(n => [+y, n]) : [[+y, +q]];
+    btn.disabled = true; btn.textContent = '만드는 중…';
+    try {
+      const a = `${quarters[0][0]}-${pad(quarters[0][1] * 3 - 2)}-01`, last = quarters[quarters.length - 1], b = ymd(new Date(last[0], last[1] * 3, 0));
+      const blob = XL.build(quarters, await store.events(a, b)), yy = String(y).slice(2);
+      const name = `${DEPT} 일정표_${q === 'all' ? yy + '년' : `${yy}.${q * 3 - 2}~${q * 3}월`}_${today().slice(2).replace(/-/g, '')}.xlsx`;
+      deliverFile(blob, name);
+    } catch (e) { toast(errText(e)); }
+    btn.disabled = false; btn.textContent = '엑셀 내려받기';
+  } }, '엑셀 내려받기');
+  return h('div', { class: 'card pad' }, h('p', { class: 'help', style: 'margin:0 0 10px' }, '부서에서 쓰던 엑셀 일정표 양식(월별 표, 거래처 주간업무 + 사람별 줄)으로 내려받습니다.'), h('div', { class: 'row2' }, sel, btn));
+}
+// 파일 건네기: PC는 바로 내려받기. 폰은 "공유·저장" 창을 한 번 더 띄움
+// (폰, 특히 홈 화면에 추가한 아이폰 앱은 바로 내려받기가 안 먹는 경우가 있어서 공유 창으로 [파일에 저장]·카톡·엑셀 앱을 고르게 함)
+function deliverFile(blob, name) {
+  const file = new File([blob], name, { type: blob.type });
+  const down = () => { const u = URL.createObjectURL(blob), a = h('a', { href: u, download: name, style: 'display:none' }); document.body.append(a); a.click(); setTimeout(() => { a.remove(); URL.revokeObjectURL(u); }, 60000); };
+  const canShare = !!(navigator.canShare && navigator.share) && (() => { try { return navigator.canShare({ files: [file] }); } catch (e) { return false; } })();
+  const phone = matchMedia('(pointer:coarse)').matches;
+  if (!phone || !canShare) { down(); if (!phone) return toast('엑셀 파일을 내려받았습니다. (다운로드 폴더)'); }
+  sheetAt('mid', h('h3', {}, '엑셀 파일이 준비됐습니다'), h('p', { class: 'help', style: 'word-break:break-all' }, name),
+    canShare && h('button', { class: 'btn', style: 'width:100%;margin-bottom:8px', onclick: async () => { try { await navigator.share({ files: [file] }); closeSheet(); } catch (e) { if (e && e.name !== 'AbortError') toast('공유 창을 열지 못했습니다. 아래 "바로 내려받기"를 눌러 주세요.'); } } }, '저장·공유하기 (파일에 저장, 카톡, 엑셀 앱)'),
+    h('button', { class: 'btn ghost', style: 'width:100%;margin-bottom:8px', onclick: down }, canShare ? '바로 내려받기' : '다시 내려받기'),
+    !canShare && h('p', { class: 'help' }, '내려받은 파일은 폰의 [다운로드] 또는 [파일] 앱에서 확인할 수 있습니다.'),
+    h('div', { class: 'btns' }, h('button', { class: 'btn ghost', onclick: closeSheet }, '닫기')));
 }
 
 /* ---------- 거래처 관리 (관리자) ---------- */
